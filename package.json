@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "node 02_Isolation_Chamber/test_ledger_v1.js"
+    "test": "node 03_Stable_Build/test_ledger_v1.js && node 03_Stable_Build/test_vehicle_physics_v1.js && node 03_Stable_Build/test_lobby_v1.js && node 03_Stable_Build/test_items_v1.js"
   },
   "dependencies": {
     "ws": "^8.21.1"
