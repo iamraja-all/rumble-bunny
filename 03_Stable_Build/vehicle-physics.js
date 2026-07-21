@@ -366,3 +366,57 @@ export function launchVehicle(vehicle, upwardSpeed) {
   vehicle.modifiers.stunts = 0;
   return vehicle;
 }
+
+/**
+ * applyCarCollisions — Elastic Bounding Circle Collision
+ * 
+ * WHY:
+ * O(N^2) collision check, but N is small (8 racers + traffic).
+ * Uses a simple 2D circle collision on the XZ plane.
+ * If cars overlap, we resolve the penetration by pushing them apart
+ * and transferring some momentum to simulate a crash/bump.
+ */
+export function applyCarCollisions(vehicles) {
+  const COLLISION_RADIUS = 2.0; // 4m diameter hitbox
+  const COLLISION_RADIUS_SQ = COLLISION_RADIUS * COLLISION_RADIUS;
+  
+  for (let i = 0; i < vehicles.length; i++) {
+    for (let j = i + 1; j < vehicles.length; j++) {
+      const v1 = vehicles[i];
+      const v2 = vehicles[j];
+      
+      // Ignore if either is airborne
+      if (v1.state === 'AIRBORNE' || v2.state === 'AIRBORNE') continue;
+      
+      const dx = v2.x - v1.x;
+      const dz = v2.z - v1.z;
+      const distSq = dx * dx + dz * dz;
+      
+      if (distSq < COLLISION_RADIUS_SQ && distSq > 0.0001) {
+        // They are colliding!
+        const dist = Math.sqrt(distSq);
+        const overlap = COLLISION_RADIUS - dist;
+        
+        // Normalize direction vector pointing from v1 to v2
+        const nx = dx / dist;
+        const nz = dz / dist;
+        
+        // Push apart (resolve penetration)
+        const pushAmount = overlap / 2;
+        v1.x -= nx * pushAmount;
+        v1.z -= nz * pushAmount;
+        
+        v2.x += nx * pushAmount;
+        v2.z += nz * pushAmount;
+        
+        // Momentum transfer (simple speed reduction and bump)
+        // A harsh crash reduces speed significantly.
+        const speedTransfer = 0.5; 
+        
+        const avgSpeed = (v1.speed + v2.speed) / 2;
+        v1.speed = avgSpeed * speedTransfer;
+        v2.speed = avgSpeed * speedTransfer;
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@ import { getLaunchPadAt, updateSpawners } from './track.js';
 import { serializeLedger } from './ledger.js';
 import { WebSocketServer } from 'ws';
 import { Lobby } from './lobby.js';
-import { updateVehicle, launchVehicle } from './vehicle-physics.js';
+import { updateVehicle, launchVehicle, applyCarCollisions } from './vehicle-physics.js';
 import { updateItems } from './items-physics.js';
 import { RaceManager } from './race.js';
 import { BotController } from './bots.js';
@@ -45,6 +45,19 @@ for (let i = 1; i <= 7; i++) {
   raceManager.registerPlayer(botId);
   bots.set(botId, new BotController(botId));
   console.log(`🤖 Spawning AI opponent: ${botId}`);
+}
+
+// Spawn 3 Traffic Vehicles that act as moving obstacles
+const trafficIds = [];
+for (let i = 1; i <= 3; i++) {
+  const tId = `traffic-${i}`;
+  lobby.join(tId); // This gets assigned a PID like P8, P9
+  trafficIds.push(clientId => lobby.players.get(clientId));
+  console.log(`🚗 Spawning Traffic Obstacle: ${tId}`);
+  // Force their starting positions way down the track
+  const v = lobby.getVehicle(tId);
+  v.z = -50 - (i * 60); // Spread them out down the track
+  v.x = (i % 2 === 0) ? -4 : 4; // Alternate left/right lanes
 }
 
 wss.on('connection', (ws) => {
@@ -111,6 +124,14 @@ setInterval(() => {
       // Bots generate their own input based on the track and race state
       input = bots.get(clientId).generateInput(v, raceState, raceInfo);
       v._input = input;
+    } else if (clientId.startsWith('traffic-')) {
+      // Traffic drives slowly straight ahead
+      input = { throttle: 0.3, brake: 0, steer: 0, drift: false };
+      
+      // If traffic reaches the end of the track (Z < -250), loop them back to the start
+      if (v.z < -250) {
+        v.z = 10;
+      }
     } else {
       input = v._input; // Human input (received via WebSocket)
     }
@@ -138,6 +159,7 @@ setInterval(() => {
   // 3. Update Items & Collisions
   const updatedVehicles = lobby.getAllVehicles();
   activeItems = updateItems(activeItems, updatedVehicles, DT);
+  applyCarCollisions(updatedVehicles);
 
   // 4. Generate State Frame
   const vehicleLedger = lobby.getLedgerFrame();

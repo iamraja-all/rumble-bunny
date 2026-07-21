@@ -61,9 +61,9 @@ export class Renderer {
     this.setupEnvironment();
     this.loadAssets();
 
-    // Smooth camera follow state
-    this._camPos = new THREE.Vector3(0, 5, 12);
-    this._camTarget = new THREE.Vector3();
+    // Smooth camera follow state: High and Wide angle for better visibility
+    this._camPos = new THREE.Vector3(0, 10, 18);
+    this._camTarget = new THREE.Vector3(0, 0, -10); // Look slightly ahead of the car
 
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -686,15 +686,17 @@ export class Renderer {
 
       // Camera Follow for local player — smooth lerp
       if (entity.id === localPid) {
-        const desiredOffset = new THREE.Vector3(0, 6, 14);
-        desiredOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
+        const camOffset = new THREE.Vector3(0, 10, 18);
+        camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
+        const targetCamPos = mesh.position.clone().add(camOffset);
+        this._camPos.lerp(targetCamPos, 0.1);
 
-        const desiredPos = mesh.position.clone().add(desiredOffset);
-
-        // Smooth lerp (lower = smoother, higher = snappier)
-        this._camPos.lerp(desiredPos, 0.08);
-        this._camTarget.lerp(mesh.position, 0.12);
-
+        // Look slightly ahead of the car to see ramps
+        const lookOffset = new THREE.Vector3(0, 0, -10);
+        lookOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
+        const lookTarget = mesh.position.clone().add(lookOffset);
+        
+        this._camTarget.lerp(lookTarget, 0.1);
         this.camera.position.copy(this._camPos);
         this.camera.lookAt(this._camTarget);
       }
