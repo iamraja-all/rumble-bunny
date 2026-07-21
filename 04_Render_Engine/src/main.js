@@ -3,6 +3,7 @@ import { NetworkController } from './network.js';
 import { Renderer } from './renderer.js';
 import { HUD } from './hud.js';
 import { SoundEngine } from './audio.js';
+import { Minimap } from './minimap.js';
 
 // Get canvas
 const canvas = document.querySelector('#app');
@@ -15,6 +16,9 @@ const audio = new SoundEngine();
 
 // Initialize HUD Overlay (pass audio so it can trigger SFX)
 const hud = new HUD(audio);
+
+// Initialize Minimap
+const minimap = new Minimap();
 
 // Browsers require user interaction to start AudioContext
 document.body.addEventListener('click', () => {
@@ -59,6 +63,9 @@ function animate() {
     if (localVehicle) {
       audio.update(localVehicle);
     }
+    
+    // Draw minimap
+    minimap.draw(state, network.pid);
   } else {
     // Still update HUD for countdown even before entities arrive
     hud.update([], network.pid, network.raceInfo);
