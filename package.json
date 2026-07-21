@@ -1,0 +1,9 @@
+{
+  "name": "rumble-bunny",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node 02_Isolation_Chamber/test_ledger_v1.js"
+  },
+  "dependencies": {}
+}
