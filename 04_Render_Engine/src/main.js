@@ -15,9 +15,15 @@ const hud = new HUD();
 // Initialize Network (WebSocket)
 const network = new NetworkController('ws://localhost:8080');
 
+let lastTime = performance.now();
+
 // 60fps Animation Loop
 function animate() {
   requestAnimationFrame(animate);
+
+  const now = performance.now();
+  const dt = (now - lastTime) / 1000.0;
+  lastTime = now;
 
   const state = network.getLatestState();
   if (state && state.length > 0) {
@@ -28,6 +34,10 @@ function animate() {
     hud.update([], network.pid, network.raceInfo);
   }
   
+  // Update particles
+  renderer.smokeSystem.update(dt);
+  renderer.flameSystem.update(dt);
+
   renderer.render();
 }
 

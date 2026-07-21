@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { ParticleSystem } from './particles.js';
 
 /**
  * Render Engine (Three.js Wrapper)
@@ -51,6 +52,10 @@ export class Renderer {
     // GLTF model template (null until loaded, if ever)
     this.kartModelTemplate = null;
     this.kartModelLoaded = false;
+
+    // Particle Systems
+    this.smokeSystem = new ParticleSystem(this.scene, 2000);
+    this.flameSystem = new ParticleSystem(this.scene, 1000);
 
     this.setupLighting();
     this.setupEnvironment();
@@ -450,6 +455,60 @@ export class Renderer {
           setKartColor(pulse);
         } else {
           setKartColor(baseColor);
+        }
+
+        // --- Particles Emission ---
+        // Emit 2 particles per frame per effect for density
+        const emitCount = 2;
+        
+        // Calculate a vector pointing backwards based on kart rotation
+        const backwardDir = new THREE.Vector3(0, 0, 1);
+        backwardDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
+
+        if (entity.state === 'DRIFT') {
+          for (let k = 0; k < emitCount; k++) {
+            // Emit smoke near the rear wheels
+            const offset = backwardDir.clone().multiplyScalar(1.2);
+            offset.x += (Math.random() - 0.5) * 2.0; // spread left/right
+            offset.y += 0.2; // ground level
+            
+            this.smokeSystem.emit({
+              position: mesh.position.clone().add(offset),
+              velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * 2.0, 
+                Math.random() * 2.0 + 1.0, // move up
+                (Math.random() - 0.5) * 2.0
+              ),
+              life: 0.8 + Math.random() * 0.4,
+              startScale: 0.5 + Math.random() * 0.5,
+              endScale: 1.5,
+              color: 0xcccccc
+            });
+          }
+        }
+
+        if (entity.state === 'BOOSTING') {
+          for (let k = 0; k < emitCount; k++) {
+            // Emit fire from exhaust pipes (rear)
+            const offset = backwardDir.clone().multiplyScalar(1.8);
+            offset.x += (Math.random() - 0.5) * 1.0;
+            offset.y += 0.5;
+            
+            // Push particles backward based on kart speed
+            const exhaustVelocity = backwardDir.clone().multiplyScalar(entity.speed * 0.5 + 5.0);
+            exhaustVelocity.x += (Math.random() - 0.5) * 2.0;
+            exhaustVelocity.y += (Math.random() - 0.5) * 2.0;
+
+            const isYellow = Math.random() > 0.5;
+            this.flameSystem.emit({
+              position: mesh.position.clone().add(offset),
+              velocity: exhaustVelocity,
+              life: 0.2 + Math.random() * 0.2, // short lived
+              startScale: 0.8,
+              endScale: 0.1,
+              color: isYellow ? 0xffff00 : 0xff4400 // yellow or orange-red
+            });
+          }
         }
       }
 
