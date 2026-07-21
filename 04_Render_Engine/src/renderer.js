@@ -30,8 +30,8 @@ const PLAYER_COLORS = [
 export class Renderer {
   constructor(canvas) {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb); // Sky blue
-    this.scene.fog = new THREE.Fog(0x87ceeb, 100, 400);
+    this.scene.background = new THREE.Color(0x1a1a2e); // Twilight dark blue
+    this.scene.fog = new THREE.Fog(0x1a1a2e, 50, 300);
 
     this.camera = new THREE.PerspectiveCamera(
       65,
@@ -99,12 +99,12 @@ export class Renderer {
 
   // ── LIGHTING ──────────────────────────────────────────────────────────
   setupLighting() {
-    // Hemisphere light for natural sky/ground ambient
-    const hemiLight = new THREE.HemisphereLight(0x88ccff, 0x44aa44, 0.6);
+    // Hemisphere light for natural sky/ground ambient (dimmed for twilight)
+    const hemiLight = new THREE.HemisphereLight(0x444466, 0x112211, 0.3);
     this.scene.add(hemiLight);
 
-    // Main directional (sun)
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    // Main directional (moonlight)
+    const dirLight = new THREE.DirectionalLight(0x88bbff, 0.4);
     dirLight.position.set(50, 100, 50);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 2048;
@@ -350,6 +350,30 @@ export class Renderer {
         // Programmatic fallback
         mesh = this.createProceduralKart(color);
       }
+
+      // Add Headlights (Dynamic SpotLight)
+      const headlight = new THREE.SpotLight(0xffffff, 2.0);
+      headlight.position.set(0, 1.5, 0.5); // position on the hood
+      headlight.angle = Math.PI / 4;
+      headlight.penumbra = 0.5;
+      headlight.decay = 1.5;
+      headlight.distance = 50;
+      headlight.castShadow = true;
+      headlight.shadow.mapSize.width = 512;
+      headlight.shadow.mapSize.height = 512;
+      
+      // Point the light forward (-Z is forward in local space)
+      headlight.target.position.set(0, 0, -10);
+      
+      mesh.add(headlight);
+      mesh.add(headlight.target);
+
+      // Add a small glowing bulb mesh so the player can see the light source
+      const bulbGeo = new THREE.SphereGeometry(0.3, 8, 8);
+      const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+      bulb.position.set(0, 1.5, -1.0); // right on the nose
+      mesh.add(bulb);
     } else if (entity.type === 'TRAP') {
       // Spiky yellow sphere
       const geo = new THREE.IcosahedronGeometry(1, 0);
