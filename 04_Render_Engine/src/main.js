@@ -40,8 +40,11 @@ prompt.style.cssText = `
 prompt.textContent = '🔊 CLICK ANYWHERE TO ENABLE AUDIO';
 document.body.appendChild(prompt);
 
-// Initialize Network (WebSocket)
-const network = new NetworkController('ws://localhost:8080');
+// Initialize Network (WebSocket) dynamically based on the host.
+// We use the Vite proxy to forward /ws to the backend server (8080).
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = `${protocol}//${window.location.host}/ws`;
+const network = new NetworkController(wsUrl);
 
 let lastTime = performance.now();
 

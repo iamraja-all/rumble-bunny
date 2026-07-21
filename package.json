@@ -1,11 +1,10 @@
 {
   "name": "rumble-bunny",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
-    "test": "node 03_Stable_Build/test_ledger_v1.js && node 03_Stable_Build/test_vehicle_physics_v1.js && node 03_Stable_Build/test_lobby_v1.js && node 03_Stable_Build/test_items_v1.js"
-  },
-  "dependencies": {
-    "ws": "^8.21.1"
+    "dev:server": "node 03_Stable_Build/server.js",
+    "dev:client": "cd 04_Render_Engine && npx vite",
+    "dev:client:public": "cd 04_Render_Engine && npx vite --host",
+    "dev:ngrok": "npx ngrok http 5173"
   }
 }
