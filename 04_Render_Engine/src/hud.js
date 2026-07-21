@@ -13,7 +13,9 @@
  */
 
 export class HUD {
-  constructor() {
+  constructor(audioEngine) {
+    this.audio = audioEngine;
+    
     // Create container
     this.container = document.createElement('div');
     this.container.id = 'hud';
@@ -85,6 +87,8 @@ export class HUD {
           this.elCountdown.classList.remove('pop');
           void this.elCountdown.offsetWidth; // force reflow
           this.elCountdown.classList.add('pop');
+          
+          if (this.audio) this.audio.playCountdown('BEEP');
         }
         this._lastCountdown = cd;
       } else if (raceInfo.state === 'RACING') {
@@ -92,6 +96,9 @@ export class HUD {
           // Show GO! briefly
           this.elCountdown.textContent = 'GO!';
           this.elCountdown.classList.add('visible', 'pop');
+          
+          if (this.audio) this.audio.playCountdown('GO');
+          
           setTimeout(() => {
             this.elCountdown.classList.remove('visible');
           }, 800);
@@ -154,14 +161,17 @@ export class HUD {
       this.elState.classList.add('state-drift');
     }
 
-    // Center messages for state transitions
+    // Check for state transitions to show center messages and play audio
     if (me.state !== this._lastState) {
       if (me.state === 'AIRBORNE') {
         this.showCenterMessage('🚀 AIRBORNE!');
-      } else if (me.state === 'BOOSTING' && this._lastState === 'AIRBORNE') {
-        this.showCenterMessage(`⚡ STUNT BOOST! x${stunts || 1}`);
+        if (this.audio) this.audio.playJump();
+      } else if (me.state === 'BOOSTING') {
+        this.showCenterMessage('⚡ BOOST!');
+        if (this.audio) this.audio.playBoost();
       } else if (me.state === 'CRASHED') {
         this.showCenterMessage('💥 CRASHED!');
+        if (this.audio) this.audio.playCrash();
       }
       this._lastState = me.state;
     }
