@@ -75,8 +75,25 @@ export class Renderer {
   // ── ASSET LOADING ─────────────────────────────────────────────────────
   loadAssets() {
     const loader = new GLTFLoader();
+    
+    // 1. Load City Environment (Littlest Tokyo CC0)
     loader.load(
-      '/models/kart.glb',
+      '/models/city.glb?v=' + Date.now(),
+      (gltf) => {
+        console.log('✅ City environment loaded successfully');
+        const city = gltf.scene;
+        // Scale it massively to surround the track
+        city.scale.set(0.8, 0.8, 0.8);
+        city.position.set(50, -5, -150); 
+        this.scene.add(city);
+      },
+      undefined,
+      (err) => console.error('Failed to load city:', err)
+    );
+
+    // 2. Load Premium F1 / Sports Car
+    loader.load(
+      '/models/kart.glb?v=' + Date.now(),
       (gltf) => {
         console.log('✅ GLTF kart model loaded successfully');
         this.kartModelTemplate = gltf.scene;
@@ -104,8 +121,8 @@ export class Renderer {
         }
       },
       undefined,
-      () => {
-        console.log('ℹ️  No kart.glb found — using programmatic kart mesh');
+      (err) => {
+        console.error('ℹ️  No kart.glb found — using programmatic kart mesh', err);
         this.kartModelLoaded = false;
       }
     );
