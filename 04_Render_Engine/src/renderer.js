@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { ParticleSystem } from './particles.js';
 
 /**
@@ -75,6 +76,11 @@ export class Renderer {
   // ── ASSET LOADING ─────────────────────────────────────────────────────
   loadAssets() {
     const loader = new GLTFLoader();
+    
+    // Add Draco decompression support
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    loader.setDRACOLoader(dracoLoader);
     
     // 1. Load City Environment (Littlest Tokyo CC0)
     loader.load(
