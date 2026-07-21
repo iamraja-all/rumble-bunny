@@ -5,6 +5,7 @@ import { Lobby } from './lobby.js';
 import { updateVehicle, launchVehicle } from './vehicle-physics.js';
 import { updateItems } from './items-physics.js';
 import { RaceManager } from './race.js';
+import { BotController } from './bots.js';
 
 /**
  * Headless WebSocket Server Wrapper
@@ -31,10 +32,20 @@ const BALANCED_STATS = {
 const wss = new WebSocketServer({ port: PORT });
 const lobby = new Lobby('MainRoom', BALANCED_STATS);
 const raceManager = new RaceManager();
+const bots = new Map();
 let activeItems = [];
 let clientCounter = 0;
 
 console.log(`🚀 Rumble-Bunny Headless Server starting on ws://localhost:${PORT}`);
+
+// Spawn 7 AI bots to fill the lobby so there's always a full 8-player race
+for (let i = 1; i <= 7; i++) {
+  const botId = `bot-${i}`;
+  lobby.join(botId);
+  raceManager.registerPlayer(botId);
+  bots.set(botId, new BotController(botId));
+  console.log(`🤖 Spawning AI opponent: ${botId}`);
+}
 
 wss.on('connection', (ws) => {
   const clientId = `client-${++clientCounter}`;
@@ -87,12 +98,25 @@ setInterval(() => {
 
   // 1. Update Physics for all vehicles
   const canGo = raceManager.canAccelerate();
+  const raceInfo = raceManager.getRaceInfo();
 
   for (const [clientId, v] of lobby.players.entries()) {
-    // During countdown, zero out throttle so karts can't move
-    const input = canGo ? v._input : { throttle: 0, brake: 0, steer: 0, drift: false };
+    let input;
     
-    let newV = updateVehicle(v, input, DT);
+    // Check if this player is an AI bot
+    if (bots.has(clientId)) {
+      const raceState = raceManager.raceStates.get(clientId);
+      // Bots generate their own input based on the track and race state
+      input = bots.get(clientId).generateInput(v, raceState, raceInfo);
+      v._input = input;
+    } else {
+      input = v._input; // Human input (received via WebSocket)
+    }
+
+    // During countdown, zero out throttle so karts can't move
+    const finalInput = canGo ? input : { throttle: 0, brake: 0, steer: 0, drift: false };
+    
+    let newV = updateVehicle(v, finalInput, DT);
     
     // Check Launch Pads
     if (newV.state !== 'AIRBORNE' && newV.state !== 'CRASHED') {
@@ -118,7 +142,6 @@ setInterval(() => {
   const itemLedger = serializeLedger(activeItems);
   
   // Prepend race metadata as a special RACE line
-  const raceInfo = raceManager.getRaceInfo();
   const raceLine = `RACE|${raceInfo.state}|${raceInfo.countdown}|${raceInfo.raceTime.toFixed(1)}|${raceInfo.totalLaps}|${raceInfo.finishOrder.length}`;
   
   let fullFrame = raceLine;
