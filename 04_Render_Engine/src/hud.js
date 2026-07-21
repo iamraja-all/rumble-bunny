@@ -19,8 +19,10 @@ export class HUD {
     this.container.id = 'hud';
     this.container.innerHTML = `
       <div class="hud-top-bar">
+        <div class="hud-lap" id="hud-lap">LAP 0/3</div>
         <div class="hud-position" id="hud-position">—</div>
         <div class="hud-state" id="hud-state">WAITING</div>
+        <div class="hud-race-timer" id="hud-race-timer">0:00.0</div>
       </div>
       <div class="hud-bottom">
         <div class="hud-speed-block">
@@ -43,26 +45,72 @@ export class HUD {
         </div>
       </div>
       <div class="hud-center-message" id="hud-center-msg"></div>
+      <div class="hud-countdown" id="hud-countdown"></div>
     `;
 
     document.body.appendChild(this.container);
     this.injectStyles();
 
     // Cache DOM references
+    this.elLap = document.getElementById('hud-lap');
     this.elPosition = document.getElementById('hud-position');
     this.elState = document.getElementById('hud-state');
+    this.elRaceTimer = document.getElementById('hud-race-timer');
     this.elSpeed = document.getElementById('hud-speed');
     this.elSpeedBar = document.getElementById('hud-speed-bar');
     this.elBoostBar = document.getElementById('hud-boost-bar');
     this.elBoostVal = document.getElementById('hud-boost-val');
     this.elStunts = document.getElementById('hud-stunts');
     this.elCenterMsg = document.getElementById('hud-center-msg');
+    this.elCountdown = document.getElementById('hud-countdown');
 
     this._centerMsgTimer = 0;
     this._lastState = '';
+    this._lastCountdown = 0;
+    this._lastLap = 0;
   }
 
-  update(entities, localPid) {
+  update(entities, localPid, raceInfo) {
+    // ── RACE STATE ──
+    if (raceInfo) {
+      // Countdown
+      if (raceInfo.state === 'COUNTDOWN') {
+        const cd = raceInfo.countdown;
+        if (cd > 0) {
+          this.elCountdown.textContent = cd;
+          this.elCountdown.classList.add('visible');
+        }
+        if (cd !== this._lastCountdown && cd > 0) {
+          // Re-trigger animation
+          this.elCountdown.classList.remove('pop');
+          void this.elCountdown.offsetWidth; // force reflow
+          this.elCountdown.classList.add('pop');
+        }
+        this._lastCountdown = cd;
+      } else if (raceInfo.state === 'RACING') {
+        if (this._lastCountdown > 0) {
+          // Show GO! briefly
+          this.elCountdown.textContent = 'GO!';
+          this.elCountdown.classList.add('visible', 'pop');
+          setTimeout(() => {
+            this.elCountdown.classList.remove('visible');
+          }, 800);
+          this._lastCountdown = 0;
+        } else {
+          this.elCountdown.classList.remove('visible');
+        }
+      } else if (raceInfo.state === 'COMPLETE') {
+        this.elCountdown.classList.remove('visible');
+      }
+
+      // Race timer
+      const t = raceInfo.raceTime || 0;
+      const mins = Math.floor(t / 60);
+      const secs = Math.floor(t % 60);
+      const tenths = Math.floor((t * 10) % 10);
+      this.elRaceTimer.textContent = `${mins}:${secs.toString().padStart(2, '0')}.${tenths}`;
+    }
+
     if (!localPid || entities.length === 0) return;
 
     const me = entities.find(e => e.id === localPid);
@@ -124,6 +172,21 @@ export class HUD {
     const rank = vehicles.findIndex(v => v.id === localPid) + 1;
     const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
     this.elPosition.textContent = `${rank}${suffix}`;
+
+    // Lap counter
+    const lap = me.modifiers?.lap || 0;
+    const totalLaps = raceInfo?.totalLaps || 3;
+    this.elLap.textContent = `LAP ${Math.min(lap + 1, totalLaps)}/${totalLaps}`;
+
+    // Lap completion message
+    if (lap > this._lastLap && lap > 0) {
+      if (lap >= totalLaps) {
+        this.showCenterMessage('🏁 RACE FINISHED!');
+      } else {
+        this.showCenterMessage(`🏁 LAP ${lap} COMPLETE!`);
+      }
+      this._lastLap = lap;
+    }
   }
 
   showCenterMessage(msg) {
@@ -321,6 +384,55 @@ export class HUD {
       .hud-center-message.visible {
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
+      }
+
+      /* ─ Countdown ─ */
+      .hud-countdown {
+        position: absolute;
+        top: 40%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.5);
+        font-size: 120px;
+        font-weight: 900;
+        letter-spacing: 8px;
+        text-shadow: 0 0 60px rgba(255,255,255,0.9), 0 0 120px rgba(0,204,255,0.5);
+        opacity: 0;
+        transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+        pointer-events: none;
+      }
+      .hud-countdown.visible {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+      }
+      .hud-countdown.pop {
+        animation: countdown-pop 0.3s ease-out;
+      }
+      @keyframes countdown-pop {
+        0% { transform: translate(-50%, -50%) scale(1.5); }
+        100% { transform: translate(-50%, -50%) scale(1); }
+      }
+
+      /* ─ Race Info ─ */
+      .hud-lap {
+        font-size: 20px;
+        font-weight: 700;
+        padding: 6px 16px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.4);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(0,204,255,0.3);
+        letter-spacing: 2px;
+      }
+      .hud-race-timer {
+        font-size: 20px;
+        font-weight: 500;
+        padding: 6px 16px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.4);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255,255,255,0.15);
+        letter-spacing: 2px;
+        font-variant-numeric: tabular-nums;
       }
     `;
     document.head.appendChild(style);

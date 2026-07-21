@@ -139,6 +139,15 @@ export class Renderer {
     this.createSpawnerPad(-5, -30);
     this.createSpawnerPad(5, -30);
     this.createSpawnerPad(0, -100);
+
+    // Checkpoint gates (matching race.js CHECKPOINTS)
+    this.createCheckpointGate(0, -40, 40, 0x00ccff, 'CP1');
+    this.createCheckpointGate(0, -80, 40, 0x00ccff, 'CP2');
+    this.createCheckpointGate(0, -130, 40, 0x00ccff, 'CP3');
+    this.createCheckpointGate(0, -180, 40, 0x00ccff, 'CP4');
+
+    // Finish line arch
+    this.createCheckpointGate(0, -5, 40, 0xffffff, 'FINISH');
   }
 
   createRamp3D(x, z, width, length, height) {
@@ -171,6 +180,36 @@ export class Renderer {
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(x, 0.3, z);
     this.scene.add(ring);
+  }
+
+  createCheckpointGate(x, z, width, color) {
+    const group = new THREE.Group();
+    const pillarHeight = 8;
+    const pillarRadius = 0.4;
+    const halfW = width / 2;
+
+    // Left pillar
+    const pillarGeo = new THREE.CylinderGeometry(pillarRadius, pillarRadius, pillarHeight, 8);
+    const pillarMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+    const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
+    leftPillar.position.set(-halfW, pillarHeight / 2, 0);
+    group.add(leftPillar);
+
+    // Right pillar
+    const rightPillar = new THREE.Mesh(pillarGeo, pillarMat);
+    rightPillar.position.set(halfW, pillarHeight / 2, 0);
+    group.add(rightPillar);
+
+    // Top bar
+    const barGeo = new THREE.CylinderGeometry(pillarRadius * 0.7, pillarRadius * 0.7, width, 8);
+    const barMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+    const bar = new THREE.Mesh(barGeo, barMat);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.set(0, pillarHeight, 0);
+    group.add(bar);
+
+    group.position.set(x, 0, z);
+    this.scene.add(group);
   }
 
   // ── PROGRAMMATIC KART (FALLBACK) ──────────────────────────────────────

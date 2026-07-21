@@ -5,6 +5,7 @@ export class NetworkController {
     this.ws = new WebSocket(url);
     this.pid = null;
     this.latestState = [];
+    this.raceInfo = { state: 'WAITING', countdown: 0, raceTime: 0, totalLaps: 3, finishedCount: 0 };
     
     this.input = {
       throttle: 0,
@@ -27,8 +28,24 @@ export class NetworkController {
         return;
       }
 
-      // Parse physics ledger frame
-      this.latestState = parseLedger(msg);
+      // Split lines and extract RACE metadata
+      const lines = msg.split('\n');
+      const ledgerLines = [];
+      for (const line of lines) {
+        if (line.startsWith('RACE|')) {
+          const parts = line.split('|');
+          this.raceInfo = {
+            state: parts[1],
+            countdown: Number(parts[2]),
+            raceTime: Number(parts[3]),
+            totalLaps: Number(parts[4]),
+            finishedCount: Number(parts[5]),
+          };
+        } else {
+          ledgerLines.push(line);
+        }
+      }
+      this.latestState = parseLedger(ledgerLines.join('\n'));
     };
   }
 

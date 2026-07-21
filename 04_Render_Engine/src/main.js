@@ -22,7 +22,10 @@ function animate() {
   const state = network.getLatestState();
   if (state && state.length > 0) {
     renderer.updateState(state, network.pid);
-    hud.update(state, network.pid);
+    hud.update(state, network.pid, network.raceInfo);
+  } else {
+    // Still update HUD for countdown even before entities arrive
+    hud.update([], network.pid, network.raceInfo);
   }
   
   renderer.render();

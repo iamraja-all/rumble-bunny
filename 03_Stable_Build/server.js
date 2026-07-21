@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import { Lobby } from './lobby.js';
 import { updateVehicle, launchVehicle } from './vehicle-physics.js';
 import { updateItems } from './items-physics.js';
+import { RaceManager } from './race.js';
 
 /**
  * Headless WebSocket Server Wrapper
@@ -29,6 +30,7 @@ const BALANCED_STATS = {
 
 const wss = new WebSocketServer({ port: PORT });
 const lobby = new Lobby('MainRoom', BALANCED_STATS);
+const raceManager = new RaceManager();
 let activeItems = [];
 let clientCounter = 0;
 
@@ -46,6 +48,9 @@ wss.on('connection', (ws) => {
 
   console.log(`[+] Client connected: ${clientId} assigned ${pid}`);
   ws.send(`INIT|${pid}`);
+
+  // Register player for race tracking
+  raceManager.registerPlayer(clientId);
 
   // Default input state
   const v = lobby.getVehicle(clientId);
@@ -67,6 +72,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log(`[-] Client disconnected: ${clientId}`);
+    raceManager.removePlayer(clientId);
     lobby.leave(clientId);
   });
 });
@@ -80,8 +86,13 @@ setInterval(() => {
   }
 
   // 1. Update Physics for all vehicles
+  const canGo = raceManager.canAccelerate();
+
   for (const [clientId, v] of lobby.players.entries()) {
-    let newV = updateVehicle(v, v._input, DT);
+    // During countdown, zero out throttle so karts can't move
+    const input = canGo ? v._input : { throttle: 0, brake: 0, steer: 0, drift: false };
+    
+    let newV = updateVehicle(v, input, DT);
     
     // Check Launch Pads
     if (newV.state !== 'AIRBORNE' && newV.state !== 'CRASHED') {
@@ -95,19 +106,26 @@ setInterval(() => {
     lobby.players.set(clientId, newV);
   }
 
-  // Also need to get the updated vehicles array for items collision
-  const updatedVehicles = lobby.getAllVehicles();
+  // 2. Update Race (checkpoint/lap detection — writes to vehicle modifiers)
+  raceManager.update(DT, lobby);
 
-  // 2. Update Items & Collisions
+  // 3. Update Items & Collisions
+  const updatedVehicles = lobby.getAllVehicles();
   activeItems = updateItems(activeItems, updatedVehicles, DT);
 
-  // 3. Generate State Frame
+  // 4. Generate State Frame
   const vehicleLedger = lobby.getLedgerFrame();
   const itemLedger = serializeLedger(activeItems);
   
-  const fullFrame = itemLedger ? `${vehicleLedger}\n${itemLedger}` : vehicleLedger;
+  // Prepend race metadata as a special RACE line
+  const raceInfo = raceManager.getRaceInfo();
+  const raceLine = `RACE|${raceInfo.state}|${raceInfo.countdown}|${raceInfo.raceTime.toFixed(1)}|${raceInfo.totalLaps}|${raceInfo.finishOrder.length}`;
+  
+  let fullFrame = raceLine;
+  if (vehicleLedger) fullFrame += '\n' + vehicleLedger;
+  if (itemLedger) fullFrame += '\n' + itemLedger;
 
-  // 4. Broadcast
+  // 5. Broadcast
   if (fullFrame.length > 0) {
     wss.clients.forEach((client) => {
       if (client.readyState === 1) { // WebSocket.OPEN
