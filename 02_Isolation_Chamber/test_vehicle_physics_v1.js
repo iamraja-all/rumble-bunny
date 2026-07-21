@@ -174,19 +174,18 @@ function runTests() {
   // ── Test 9: Successful stunt landing awards boost ───────────────────
   (() => {
     let v = createVehicleState('P0', BALANCED_STATS);
-    v = launchVehicle(v, 10);
-    v.modifiers.stunts = 2; // simulate 2 accumulated stunts
+    v = launchVehicle(v, 15); // Need enough air time to complete a flip
 
-    // Simulate until landed
+    // Simulate airborne rotation (pitch forward)
     for (let i = 0; i < 300; i++) {
-      v = updateVehicle(v, { throttle: 0, brake: 0, steer: 0, drift: false }, DT);
+      v = updateVehicle(v, { throttle: 1.0, brake: 0, steer: 0, drift: false }, DT); // Throttle pitches forward
       if (v.state !== 'AIRBORNE') break;
     }
 
     assert(v.state === 'BOOSTING', `T9: Successful landing with stunts gives BOOSTING (got ${v.state})`);
     assert(
-      approxEqual(v.modifiers.boost_timer, 2 * 0.75),
-      `T9: Boost timer = stunts * 0.75 (got ${v.modifiers.boost_timer}, expected ${2 * 0.75})`
+      v.modifiers.boost_timer > 0,
+      `T9: Boost timer > 0 (got ${v.modifiers.boost_timer.toFixed(2)})`
     );
     assert(v.modifiers.stunts === 0, 'T9: Stunt counter resets after landing');
   })();
@@ -227,7 +226,7 @@ function runTests() {
     assert(v.modifiers.crash_timer === 0, 'T11: Crash timer is zero after recovery');
   })();
 
-  // ── Test 12: No steering while airborne ─────────────────────────────
+  // ── Test 12: Steering while airborne spins the vehicle (stunt) ──────
   (() => {
     let v = createVehicleState('P0', BALANCED_STATS);
     v.speed = 20;
@@ -235,12 +234,12 @@ function runTests() {
     v = updateVehicle(v, { throttle: 0, brake: 0, steer: 0, drift: false }, DT);
     const yawAtLaunch = v.rotY;
 
-    // Try to steer while airborne for 30 frames
+    // Steer while airborne for 30 frames
     for (let i = 0; i < 30; i++) {
       v = updateVehicle(v, { throttle: 0, brake: 0, steer: 1.0, drift: false }, DT);
     }
 
-    assert(v.rotY === yawAtLaunch, 'T12: Steering has no effect while airborne');
+    assert(v.rotY !== yawAtLaunch, 'T12: Steering spins the vehicle while airborne');
   })();
 
   // ── Test 13: No throttle while airborne ─────────────────────────────

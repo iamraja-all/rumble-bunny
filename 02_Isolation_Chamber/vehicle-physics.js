@@ -74,6 +74,9 @@ export function createVehicleState(id, stats) {
       boost_timer: 0,
       crash_timer: 0,
       stunts: 0,
+      takeoff_rotX: 0,
+      takeoff_rotY: 0,
+      takeoff_rotZ: 0,
     },
     // WHY: velocity components stored separately from speed for airborne
     // trajectory — speed is the scalar forward velocity on ground, but
@@ -177,9 +180,6 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
     let steerRate = s.handling * steer * speedFactor * dt;
 
     // ── DRIFT STATE ─────────────────────────────────────────────────
-    // WHY: Drift mode boosts steering angle but penalizes forward speed.
-    // This creates the classic kart-racer risk/reward: tighter corners
-    // but slower exit unless you chain it into a stunt boost.
     if (drift && v.speed > s.max_speed * 0.3) {
       v.state = v.state === 'BOOSTING' ? 'BOOSTING' : 'DRIFT';
       steerRate *= DRIFT_STEER_MULT;
@@ -189,6 +189,28 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
     }
 
     v.rotY += steerRate;
+  } else if (v.state === 'AIRBORNE') {
+    // ── STUNT DETECTION (AIRBORNE ONLY) ─────────────────────────────
+    // In air, steering input translates to stunt rotation (flips/spins)
+    const stuntMultiplier = s.stunt_rate * dt * 2.0; // Base turning speed in air
+    
+    // For testing, throttle/brake controls pitch (flips), steer controls yaw (spins/rolls)
+    v.rotX += (throttle - brake) * stuntMultiplier;
+    v.rotY += steer * stuntMultiplier;
+
+    // Check for completed 360-degree rotations (2π radians)
+    // We compare current absolute rotation against the rotation when we took off
+    const deltaX = Math.abs(v.rotX - v.modifiers.takeoff_rotX);
+    const deltaY = Math.abs(v.rotY - v.modifiers.takeoff_rotY);
+    const deltaZ = Math.abs(v.rotZ - v.modifiers.takeoff_rotZ);
+
+    const TWO_PI = 2 * Math.PI;
+    const totalRotations = Math.floor(deltaX / TWO_PI) + Math.floor(deltaY / TWO_PI) + Math.floor(deltaZ / TWO_PI);
+    
+    // Only increment stunt counter if we crossed a new 2π threshold
+    if (totalRotations > v.modifiers.stunts) {
+      v.modifiers.stunts = totalRotations;
+    }
   }
 
   return applyMovement(v, dt, groundY);
@@ -240,8 +262,12 @@ function applyMovement(v, dt, groundY) {
     }
   } else if (v.state !== 'AIRBORNE' && v.state !== 'CRASHED') {
     // WHY: If the vehicle is above ground and wasn't already airborne,
-    // it just left a ramp or edge. Transition to AIRBORNE.
+    // it just left a ramp or edge. Transition to AIRBORNE and record takeoff.
     v.state = 'AIRBORNE';
+    v.modifiers.takeoff_rotX = v.rotX;
+    v.modifiers.takeoff_rotY = v.rotY;
+    v.modifiers.takeoff_rotZ = v.rotZ;
+    v.modifiers.stunts = 0; // Reset stunts on new takeoff
   }
 
   return v;
@@ -330,5 +356,10 @@ function normalizeAngle(angle) {
  */
 export function launchVehicle(vehicle, upwardSpeed) {
   vehicle.vy = upwardSpeed;
+  vehicle.state = 'AIRBORNE';
+  vehicle.modifiers.takeoff_rotX = vehicle.rotX;
+  vehicle.modifiers.takeoff_rotY = vehicle.rotY;
+  vehicle.modifiers.takeoff_rotZ = vehicle.rotZ;
+  vehicle.modifiers.stunts = 0;
   return vehicle;
 }
