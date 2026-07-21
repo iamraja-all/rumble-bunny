@@ -1,30 +1,64 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /**
  * Render Engine (Three.js Wrapper)
- * 
+ *
  * WHY:
- * Isolates all 3D WebGL calls. It maps the incoming headless ledger state 
- * (which uses a Right-Handed, Y-Up coordinate system — native to Three.js) 
+ * Isolates all 3D WebGL calls. It maps the incoming headless ledger state
+ * (which uses a Right-Handed, Y-Up coordinate system — native to Three.js)
  * directly to visual meshes.
+ *
+ * Phase 4 upgrade: Supports loading GLTF/GLB models for vehicles.
+ * Falls back to a detailed programmatic kart (chassis + 4 wheels + spoiler)
+ * if the model file is missing.
  */
+
+// Player color palette — each slot gets a distinct hue
+const PLAYER_COLORS = [
+  0x00ccff, // P0 — Cyan (local player)
+  0xff3333, // P1 — Red
+  0x33ff33, // P2 — Green
+  0xff9900, // P3 — Orange
+  0xcc33ff, // P4 — Purple
+  0xffff33, // P5 — Yellow
+  0xff66cc, // P6 — Pink
+  0x3399ff, // P7 — Blue
+];
 
 export class Renderer {
   constructor(canvas) {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb); // Sky blue
-    
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    
+    this.scene.fog = new THREE.Fog(0x87ceeb, 100, 400);
+
+    this.camera = new THREE.PerspectiveCamera(
+      65,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    // Track meshes mapped by ID (e.g. 'P0' -> Mesh)
+    // Track meshes/groups mapped by entity ID (e.g. 'P0' -> Group)
     this.meshes = new Map();
+
+    // GLTF model template (null until loaded, if ever)
+    this.kartModelTemplate = null;
+    this.kartModelLoaded = false;
 
     this.setupLighting();
     this.setupEnvironment();
+    this.loadAssets();
+
+    // Smooth camera follow state
+    this._camPos = new THREE.Vector3(0, 5, 12);
+    this._camTarget = new THREE.Vector3();
 
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -33,152 +67,370 @@ export class Renderer {
     });
   }
 
-  setupLighting() {
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    this.scene.add(ambientLight);
+  // ── ASSET LOADING ─────────────────────────────────────────────────────
+  loadAssets() {
+    const loader = new GLTFLoader();
+    loader.load(
+      '/models/kart.glb',
+      (gltf) => {
+        console.log('✅ GLTF kart model loaded successfully');
+        this.kartModelTemplate = gltf.scene;
+        this.kartModelTemplate.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        this.kartModelLoaded = true;
+      },
+      undefined,
+      () => {
+        // File not found — that's fine, we use the programmatic fallback
+        console.log('ℹ️  No kart.glb found — using programmatic kart mesh');
+        this.kartModelLoaded = false;
+      }
+    );
+  }
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  // ── LIGHTING ──────────────────────────────────────────────────────────
+  setupLighting() {
+    // Hemisphere light for natural sky/ground ambient
+    const hemiLight = new THREE.HemisphereLight(0x88ccff, 0x44aa44, 0.6);
+    this.scene.add(hemiLight);
+
+    // Main directional (sun)
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
     dirLight.position.set(50, 100, 50);
     dirLight.castShadow = true;
-    dirLight.shadow.camera.top = 100;
-    dirLight.shadow.camera.bottom = -100;
-    dirLight.shadow.camera.left = -100;
-    dirLight.shadow.camera.right = 100;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.top = 120;
+    dirLight.shadow.camera.bottom = -120;
+    dirLight.shadow.camera.left = -120;
+    dirLight.shadow.camera.right = 120;
+    dirLight.shadow.camera.near = 1;
+    dirLight.shadow.camera.far = 300;
     this.scene.add(dirLight);
   }
 
+  // ── ENVIRONMENT ───────────────────────────────────────────────────────
   setupEnvironment() {
-    // A simple green ground plane
+    // Ground plane
     const groundGeo = new THREE.PlaneGeometry(500, 500);
     const groundMat = new THREE.MeshLambertMaterial({ color: 0x55aa55 });
     const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2; // Flat on XZ plane
+    ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.scene.add(ground);
-    
-    // Add a checkered starting line at Z=0
+
+    // Starting line
     const startGeo = new THREE.PlaneGeometry(100, 5);
     const startMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const startLine = new THREE.Mesh(startGeo, startMat);
     startLine.rotation.x = -Math.PI / 2;
-    startLine.position.y = 0.01; // slightly above ground to prevent z-fighting
+    startLine.position.y = 0.01;
     this.scene.add(startLine);
 
-    // Track Def Ramps
-    const createRamp = (x, z, width, length) => {
-      const rampGeo = new THREE.PlaneGeometry(width, length);
-      const rampMat = new THREE.MeshLambertMaterial({ color: 0xff8800 });
-      const ramp = new THREE.Mesh(rampGeo, rampMat);
-      // Tilt it slightly up to look like a ramp
-      ramp.rotation.x = -Math.PI / 2 + 0.2;
-      ramp.position.set(x, 0.5, z);
-      this.scene.add(ramp);
-    };
+    // Ramps — use 3D wedge shapes instead of flat planes
+    this.createRamp3D(0, -50, 20, 5, 2);   // ramp_1
+    this.createRamp3D(0, -150, 20, 5, 3);  // ramp_2
 
-    createRamp(0, -50, 20, 5); // ramp_1
-    createRamp(0, -150, 20, 5); // ramp_2
-
-    // Track Def Item Spawner Pads (Visual indicators of where items spawn)
-    const createSpawnerPad = (x, z) => {
-      const padGeo = new THREE.CircleGeometry(2, 16);
-      const padMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
-      const pad = new THREE.Mesh(padGeo, padMat);
-      pad.rotation.x = -Math.PI / 2;
-      pad.position.set(x, 0.02, z);
-      this.scene.add(pad);
-    };
-
-    createSpawnerPad(-5, -30);
-    createSpawnerPad(5, -30);
-    createSpawnerPad(0, -100);
+    // Item spawner pads
+    this.createSpawnerPad(-5, -30);
+    this.createSpawnerPad(5, -30);
+    this.createSpawnerPad(0, -100);
   }
 
+  createRamp3D(x, z, width, length, height) {
+    // Build a wedge from a custom buffer geometry
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(length, 0);
+    shape.lineTo(0, height);
+    shape.closePath();
+
+    const extrudeSettings = { depth: width, bevelEnabled: false };
+    const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+
+    const mat = new THREE.MeshLambertMaterial({ color: 0xff8800 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    // Position and rotate so it sits on the ground with the slope facing +Z (toward the player)
+    mesh.rotation.y = Math.PI / 2;
+    mesh.position.set(x + width / 2, 0, z - length / 2);
+    this.scene.add(mesh);
+  }
+
+  createSpawnerPad(x, z) {
+    // Glowing ring instead of flat circle
+    const ringGeo = new THREE.TorusGeometry(2, 0.3, 8, 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x66ffff });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, 0.3, z);
+    this.scene.add(ring);
+  }
+
+  // ── PROGRAMMATIC KART (FALLBACK) ──────────────────────────────────────
+  createProceduralKart(color) {
+    const group = new THREE.Group();
+
+    // ─ Chassis ─
+    const chassisGeo = new THREE.BoxGeometry(2.0, 0.6, 3.5);
+    const chassisMat = new THREE.MeshPhongMaterial({
+      color,
+      specular: 0x444444,
+      shininess: 60,
+    });
+    const chassis = new THREE.Mesh(chassisGeo, chassisMat);
+    chassis.position.y = 0.5;
+    chassis.castShadow = true;
+    group.add(chassis);
+
+    // ─ Cockpit (rounded top) ─
+    const cockpitGeo = new THREE.BoxGeometry(1.4, 0.5, 1.6);
+    const cockpitMat = new THREE.MeshPhongMaterial({
+      color: 0x222222,
+      specular: 0x111111,
+      shininess: 80,
+    });
+    const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+    cockpit.position.set(0, 1.05, -0.2);
+    cockpit.castShadow = true;
+    group.add(cockpit);
+
+    // ─ Spoiler ─
+    const spoilerGeo = new THREE.BoxGeometry(2.2, 0.1, 0.4);
+    const spoilerMat = new THREE.MeshPhongMaterial({ color });
+    const spoiler = new THREE.Mesh(spoilerGeo, spoilerMat);
+    spoiler.position.set(0, 1.2, 1.5);
+    spoiler.castShadow = true;
+    group.add(spoiler);
+
+    // Spoiler pylons
+    for (const side of [-0.8, 0.8]) {
+      const pylonGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
+      const pylonMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+      const pylon = new THREE.Mesh(pylonGeo, pylonMat);
+      pylon.position.set(side, 0.95, 1.5);
+      group.add(pylon);
+    }
+
+    // ─ Wheels (4x) ─
+    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+    const wheelMat = new THREE.MeshPhongMaterial({
+      color: 0x111111,
+      specular: 0x333333,
+      shininess: 30,
+    });
+
+    const wheelPositions = [
+      { x: -1.1, y: 0.4, z: -1.2 }, // front-left
+      { x: 1.1, y: 0.4, z: -1.2 },  // front-right
+      { x: -1.1, y: 0.4, z: 1.2 },  // rear-left
+      { x: 1.1, y: 0.4, z: 1.2 },   // rear-right
+    ];
+
+    for (const pos of wheelPositions) {
+      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.rotation.z = Math.PI / 2; // Rotate so cylinder axis is along X
+      wheel.position.set(pos.x, pos.y, pos.z);
+      wheel.castShadow = true;
+      group.add(wheel);
+
+      // Hub cap
+      const hubGeo = new THREE.CircleGeometry(0.25, 8);
+      const hubMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
+      const hub = new THREE.Mesh(hubGeo, hubMat);
+      hub.rotation.y = pos.x > 0 ? Math.PI / 2 : -Math.PI / 2;
+      hub.position.set(
+        pos.x + (pos.x > 0 ? 0.16 : -0.16),
+        pos.y,
+        pos.z
+      );
+      group.add(hub);
+    }
+
+    // ─ Exhaust pipes ─
+    for (const side of [-0.5, 0.5]) {
+      const exGeo = new THREE.CylinderGeometry(0.12, 0.15, 0.6, 8);
+      const exMat = new THREE.MeshPhongMaterial({
+        color: 0x666666,
+        specular: 0x999999,
+        shininess: 100,
+      });
+      const exhaust = new THREE.Mesh(exGeo, exMat);
+      exhaust.rotation.x = Math.PI / 2;
+      exhaust.position.set(side, 0.5, 2.0);
+      group.add(exhaust);
+    }
+
+    // ─ Headlights ─
+    for (const side of [-0.6, 0.6]) {
+      const lightGeo = new THREE.SphereGeometry(0.15, 8, 8);
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
+      const headlight = new THREE.Mesh(lightGeo, lightMat);
+      headlight.position.set(side, 0.7, -1.8);
+      group.add(headlight);
+    }
+
+    return group;
+  }
+
+  // ── ENTITY → MESH MAPPING ────────────────────────────────────────────
   getMeshForEntity(entity) {
     if (this.meshes.has(entity.id)) {
       return this.meshes.get(entity.id);
     }
 
-    // Spawn a new placeholder mesh based on type
-    let geometry, material;
+    let mesh;
+
     if (entity.type === 'VEHICLE') {
-      // Vehicle: Red box
-      geometry = new THREE.BoxGeometry(2, 1.5, 4);
-      material = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+      // Determine player color from slot index
+      const slotIndex = parseInt(entity.id.replace('P', ''), 10) || 0;
+      const color = PLAYER_COLORS[slotIndex % PLAYER_COLORS.length];
+
+      if (this.kartModelLoaded && this.kartModelTemplate) {
+        // Clone the GLTF model
+        mesh = this.kartModelTemplate.clone();
+        // Tint all meshes in the clone
+        mesh.traverse((child) => {
+          if (child.isMesh) {
+            child.material = child.material.clone();
+            child.material.color.setHex(color);
+          }
+        });
+      } else {
+        // Programmatic fallback
+        mesh = this.createProceduralKart(color);
+      }
     } else if (entity.type === 'TRAP') {
-      // Trap: Yellow sphere
-      geometry = new THREE.SphereGeometry(1, 16, 16);
-      material = new THREE.MeshLambertMaterial({ color: 0xffff00 });
+      // Spiky yellow sphere
+      const geo = new THREE.IcosahedronGeometry(1, 0);
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0xffcc00,
+        specular: 0xffff00,
+        shininess: 40,
+        flatShading: true,
+      });
+      mesh = new THREE.Mesh(geo, mat);
     } else if (entity.type === 'PROJECTILE') {
-      // Projectile: Green sphere
-      geometry = new THREE.SphereGeometry(0.8, 16, 16);
-      material = new THREE.MeshLambertMaterial({ color: 0x00ff00 });
+      // Green glowing sphere
+      const geo = new THREE.SphereGeometry(0.6, 16, 16);
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0x00ff44,
+        emissive: 0x00ff44,
+        emissiveIntensity: 0.5,
+        shininess: 100,
+      });
+      mesh = new THREE.Mesh(geo, mat);
     } else if (entity.type === 'POWERUP_BOOST') {
-      // Boost: Blue box
-      geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
-      material = new THREE.MeshLambertMaterial({ color: 0x0000ff });
+      // Rotating blue crystal
+      const geo = new THREE.OctahedronGeometry(1.0, 0);
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0x3399ff,
+        emissive: 0x1166cc,
+        emissiveIntensity: 0.4,
+        shininess: 120,
+        flatShading: true,
+      });
+      mesh = new THREE.Mesh(geo, mat);
+      // Tag it for animation
+      mesh.userData.isPickup = true;
     } else {
-      geometry = new THREE.BoxGeometry(1, 1, 1);
-      material = new THREE.MeshLambertMaterial({ color: 0x888888 });
+      const geo = new THREE.BoxGeometry(1, 1, 1);
+      const mat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+      mesh = new THREE.Mesh(geo, mat);
     }
 
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    
+    // Enable shadows on single meshes (groups handle it per-child)
+    if (mesh.isMesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    }
+
     this.scene.add(mesh);
     this.meshes.set(entity.id, mesh);
-    
+
     return mesh;
   }
 
+  // ── PER-FRAME STATE SYNC ──────────────────────────────────────────────
   updateState(entities, localPid) {
-    // Track active IDs to despawn stale meshes (e.g. consumed items or disconnected players)
     const activeIds = new Set();
+    const time = performance.now() * 0.001; // seconds
 
     for (let i = 0; i < entities.length; i++) {
       const entity = entities[i];
       activeIds.add(entity.id);
-      
-      const mesh = this.getMeshForEntity(entity);
-      
-      // Update position
-      // Add half height so the box sits on the ground
-      const halfHeight = entity.type === 'VEHICLE' ? 0.75 : 0.5;
-      mesh.position.set(entity.x, entity.y + halfHeight, entity.z);
 
-      // Update rotation
-      // Euler order 'YXZ' allows yaw to be independent of pitch/roll
+      const mesh = this.getMeshForEntity(entity);
+
+      // Position
+      mesh.position.set(entity.x, entity.y, entity.z);
+
+      // Rotation
       mesh.rotation.set(entity.rotX, entity.rotY, entity.rotZ, 'YXZ');
-      
-      // Simple visual flair for states
+
+      // Animate pickups (hover + spin)
+      if (mesh.userData && mesh.userData.isPickup) {
+        mesh.position.y += 1.0 + Math.sin(time * 3) * 0.3;
+        mesh.rotation.y = time * 2;
+      }
+
+      // Vehicle state visual effects
       if (entity.type === 'VEHICLE') {
-        if (entity.state === 'CRASHED') {
-          mesh.material.color.setHex(0x333333); // Greyed out
-        } else if (entity.state === 'BOOSTING') {
-          mesh.material.color.setHex(0xffaa00); // Orange flame
-        } else {
-          // If it's my vehicle, make it cyan to stand out
-          if (entity.id === localPid) {
-            mesh.material.color.setHex(0x00ffff);
-          } else {
-            mesh.material.color.setHex(0xff0000); // Normal red
+        const slotIndex = parseInt(entity.id.replace('P', ''), 10) || 0;
+        const baseColor = PLAYER_COLORS[slotIndex % PLAYER_COLORS.length];
+
+        // Find the chassis mesh (first direct child mesh, or first child in group)
+        const setKartColor = (color) => {
+          if (mesh.isGroup) {
+            // Color the chassis (first child)
+            const chassis = mesh.children[0];
+            if (chassis && chassis.isMesh) {
+              chassis.material.color.setHex(color);
+            }
+            // Also color the spoiler (third child)
+            const spoiler = mesh.children[2];
+            if (spoiler && spoiler.isMesh) {
+              spoiler.material.color.setHex(color);
+            }
+          } else if (mesh.isMesh) {
+            mesh.material.color.setHex(color);
           }
+        };
+
+        if (entity.state === 'CRASHED') {
+          setKartColor(0x333333);
+        } else if (entity.state === 'BOOSTING') {
+          // Pulse between orange and base color
+          const pulse = Math.sin(time * 10) > 0 ? 0xffaa00 : 0xff6600;
+          setKartColor(pulse);
+        } else {
+          setKartColor(baseColor);
         }
       }
 
-      // Camera Follow for local player
+      // Camera Follow for local player — smooth lerp
       if (entity.id === localPid) {
-        // Position camera behind and above the kart
-        const camOffset = new THREE.Vector3(0, 5, 12);
-        // Rotate offset by kart's yaw
-        camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
-        
-        this.camera.position.copy(mesh.position).add(camOffset);
-        this.camera.lookAt(mesh.position);
+        const desiredOffset = new THREE.Vector3(0, 6, 14);
+        desiredOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
+
+        const desiredPos = mesh.position.clone().add(desiredOffset);
+
+        // Smooth lerp (lower = smoother, higher = snappier)
+        this._camPos.lerp(desiredPos, 0.08);
+        this._camTarget.lerp(mesh.position, 0.12);
+
+        this.camera.position.copy(this._camPos);
+        this.camera.lookAt(this._camTarget);
       }
     }
 
-    // Clean up meshes that are no longer in the ledger
+    // Despawn stale meshes
     for (const [id, mesh] of this.meshes.entries()) {
       if (!activeIds.has(id)) {
         this.scene.remove(mesh);
