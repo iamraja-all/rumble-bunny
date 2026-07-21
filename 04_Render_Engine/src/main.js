@@ -4,6 +4,7 @@ import { Renderer } from './renderer.js';
 import { HUD } from './hud.js';
 import { SoundEngine } from './audio.js';
 import { Minimap } from './minimap.js';
+import { MainMenu } from './menu.js';
 
 // Get canvas
 const canvas = document.querySelector('#app');
@@ -20,37 +21,34 @@ const hud = new HUD(audio);
 // Initialize Minimap
 const minimap = new Minimap();
 
-// Browsers require user interaction to start AudioContext
-document.body.addEventListener('click', () => {
-  audio.init();
-  const msg = document.getElementById('audio-prompt');
-  if (msg) msg.remove();
-}, { once: true });
-
-// Add a simple "Click to Start" overlay
-const prompt = document.createElement('div');
-prompt.id = 'audio-prompt';
-prompt.style.cssText = `
-  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-  background: rgba(0,204,255,0.2); border: 1px solid #0cf;
-  color: #0cf; padding: 10px 20px; border-radius: 8px;
-  font-family: Orbitron, sans-serif; font-size: 14px;
-  cursor: pointer; z-index: 1000; backdrop-filter: blur(4px);
-`;
-prompt.textContent = '🔊 CLICK ANYWHERE TO ENABLE AUDIO';
-document.body.appendChild(prompt);
-
-// Initialize Network (WebSocket) dynamically based on the host.
-// We use the Vite proxy to forward /ws to the backend server (8080).
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsUrl = `${protocol}//${window.location.host}/ws`;
-const network = new NetworkController(wsUrl);
-
+let network = null;
 let lastTime = performance.now();
+
+// Instantiate the Main Menu
+const menu = new MainMenu((selectedColor) => {
+  // 1. User clicked "ENTER LOBBY"
+  
+  // Browsers require user interaction to start AudioContext, this click qualifies
+  audio.init();
+
+  // 2. Connect to the WebSocket
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws`;
+  network = new NetworkController(wsUrl);
+  
+  // NOTE: For now, the color is selected but we aren't sending it to the server yet.
+  // In a future phase, we will pass it in the INIT message so the server spawns 
+  // the kart with the correct color!
+
+  // Start the animation loop
+  lastTime = performance.now();
+  requestAnimationFrame(animate);
+});
 
 // 60fps Animation Loop
 function animate() {
   requestAnimationFrame(animate);
+  if (!network) return;
 
   const now = performance.now();
   const dt = (now - lastTime) / 1000.0;
@@ -58,6 +56,11 @@ function animate() {
 
   const state = network.getLatestState();
   if (state && state.length > 0) {
+    // Hide menu and show HUD once race state begins broadcasting
+    if (network.raceInfo.state === 'COUNTDOWN' || network.raceInfo.state === 'RACING') {
+      menu.hide();
+      document.getElementById('hud').style.display = 'block';
+    }
     renderer.updateState(state, network.pid);
     hud.update(state, network.pid, network.raceInfo);
     

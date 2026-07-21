@@ -188,7 +188,10 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
       v.state = 'NORMAL';
     }
 
-    v.rotY += steerRate;
+    // WHY: In a Right-Handed Y-Up coordinate system, a positive rotation around
+    // the Y axis is counter-clockwise (a Left turn). When the player inputs Right
+    // (steer = +1), we need a clockwise rotation, so we *subtract* the steerRate.
+    v.rotY -= steerRate;
   } else if (v.state === 'AIRBORNE') {
     // ── STUNT DETECTION (AIRBORNE ONLY) ─────────────────────────────
     // In air, steering input translates to stunt rotation (flips/spins)
