@@ -1,7 +1,8 @@
+import { getLaunchPadAt, updateSpawners } from './track.js';
 import { serializeLedger } from './ledger.js';
 import { WebSocketServer } from 'ws';
 import { Lobby } from './lobby.js';
-import { updateVehicle } from './vehicle-physics.js';
+import { updateVehicle, launchVehicle } from './vehicle-physics.js';
 import { updateItems } from './items-physics.js';
 
 /**
@@ -72,11 +73,24 @@ wss.on('connection', (ws) => {
 
 // ── 60fps Core Game Loop ──────────────────────────────────────────────
 setInterval(() => {
-  const vehicles = lobby.getAllVehicles();
+  // 0. Update Spawners
+  const newItems = updateSpawners(DT, activeItems);
+  if (newItems.length > 0) {
+    activeItems.push(...newItems);
+  }
 
   // 1. Update Physics for all vehicles
   for (const [clientId, v] of lobby.players.entries()) {
-    const newV = updateVehicle(v, v._input, DT);
+    let newV = updateVehicle(v, v._input, DT);
+    
+    // Check Launch Pads
+    if (newV.state !== 'AIRBORNE' && newV.state !== 'CRASHED') {
+      const pad = getLaunchPadAt(newV.x, newV.z);
+      if (pad) {
+        newV = launchVehicle(newV, pad.power);
+      }
+    }
+
     newV._input = v._input;
     lobby.players.set(clientId, newV);
   }

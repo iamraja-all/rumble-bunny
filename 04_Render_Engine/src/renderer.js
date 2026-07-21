@@ -63,6 +63,34 @@ export class Renderer {
     startLine.rotation.x = -Math.PI / 2;
     startLine.position.y = 0.01; // slightly above ground to prevent z-fighting
     this.scene.add(startLine);
+
+    // Track Def Ramps
+    const createRamp = (x, z, width, length) => {
+      const rampGeo = new THREE.PlaneGeometry(width, length);
+      const rampMat = new THREE.MeshLambertMaterial({ color: 0xff8800 });
+      const ramp = new THREE.Mesh(rampGeo, rampMat);
+      // Tilt it slightly up to look like a ramp
+      ramp.rotation.x = -Math.PI / 2 + 0.2;
+      ramp.position.set(x, 0.5, z);
+      this.scene.add(ramp);
+    };
+
+    createRamp(0, -50, 20, 5); // ramp_1
+    createRamp(0, -150, 20, 5); // ramp_2
+
+    // Track Def Item Spawner Pads (Visual indicators of where items spawn)
+    const createSpawnerPad = (x, z) => {
+      const padGeo = new THREE.CircleGeometry(2, 16);
+      const padMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+      const pad = new THREE.Mesh(padGeo, padMat);
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(x, 0.02, z);
+      this.scene.add(pad);
+    };
+
+    createSpawnerPad(-5, -30);
+    createSpawnerPad(5, -30);
+    createSpawnerPad(0, -100);
   }
 
   getMeshForEntity(entity) {
