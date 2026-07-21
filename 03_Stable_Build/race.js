@@ -51,12 +51,18 @@ export function createRaceState() {
  */
 export class RaceManager {
   constructor() {
-    this.state = 'COUNTDOWN';  // COUNTDOWN -> RACING -> COMPLETE
+    this.state = 'WAITING';    // WAITING -> COUNTDOWN -> RACING -> COMPLETE
     this.countdown = 3.0;      // 3-second countdown
     this.raceTime = 0;
     this.raceStates = new Map(); // clientId -> raceState
     this.totalLaps = TOTAL_LAPS;
     this.finishOrder = [];
+  }
+
+  startCountdown() {
+    if (this.state === 'WAITING') {
+      this.state = 'COUNTDOWN';
+    }
   }
 
   registerPlayer(clientId) {

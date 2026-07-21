@@ -120,13 +120,57 @@ export class Renderer {
 
   // ── ENVIRONMENT ───────────────────────────────────────────────────────
   setupEnvironment() {
+    // Procedural Grass Texture
+    const grassCanvas = document.createElement('canvas');
+    grassCanvas.width = 512; grassCanvas.height = 512;
+    const gctx = grassCanvas.getContext('2d');
+    gctx.fillStyle = '#2d5a27'; gctx.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 10000; i++) {
+      gctx.fillStyle = Math.random() > 0.5 ? '#24491f' : '#366e2f';
+      gctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+    }
+    const grassTex = new THREE.CanvasTexture(grassCanvas);
+    grassTex.wrapS = THREE.RepeatWrapping;
+    grassTex.wrapT = THREE.RepeatWrapping;
+    grassTex.repeat.set(50, 50);
+
     // Ground plane
-    const groundGeo = new THREE.PlaneGeometry(500, 500);
-    const groundMat = new THREE.MeshLambertMaterial({ color: 0x55aa55 });
+    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+    const groundMat = new THREE.MeshLambertMaterial({ map: grassTex });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.scene.add(ground);
+
+    // Procedural Asphalt Texture
+    const roadCanvas = document.createElement('canvas');
+    roadCanvas.width = 512; roadCanvas.height = 512;
+    const rctx = roadCanvas.getContext('2d');
+    rctx.fillStyle = '#1a1a1a'; rctx.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 20000; i++) {
+      rctx.fillStyle = Math.random() > 0.5 ? '#111' : '#222';
+      rctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+    }
+    // Track boundaries (white lines)
+    rctx.fillStyle = '#ffffff';
+    rctx.fillRect(10, 0, 15, 512); // left line
+    rctx.fillRect(512 - 25, 0, 15, 512); // right line
+    
+    const roadTex = new THREE.CanvasTexture(roadCanvas);
+    roadTex.wrapS = THREE.RepeatWrapping;
+    roadTex.wrapT = THREE.RepeatWrapping;
+    roadTex.repeat.set(1, 50);
+
+    // Road plane (X: -40 to 40, Z: +50 to -250)
+    const roadWidth = 80; // Total track width is 80 (±40)
+    const roadLength = 300;
+    const roadGeo = new THREE.PlaneGeometry(roadWidth, roadLength);
+    const roadMat = new THREE.MeshLambertMaterial({ map: roadTex });
+    const road = new THREE.Mesh(roadGeo, roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(0, 0.01, -100);
+    road.receiveShadow = true;
+    this.scene.add(road);
 
     // Starting line
     const startGeo = new THREE.PlaneGeometry(100, 5);
@@ -358,11 +402,22 @@ export class Renderer {
       if (this.kartModelLoaded && this.kartModelTemplate) {
         // Clone the GLTF model
         mesh = this.kartModelTemplate.clone();
-        // Tint all meshes in the clone
+        
+        // The Ferrari GLTF from three.js examples might need scaling or rotation
+        // Adjust these values to match our 2x3.5 physics hitbox (facing -Z)
+        // (We can tweak these later if the car drives sideways!)
+        mesh.rotation.y = Math.PI; // often facing +Z, we need -Z
+
+        // Tint ONLY the car body, leave tires/glass alone
         mesh.traverse((child) => {
           if (child.isMesh) {
-            child.material = child.material.clone();
-            child.material.color.setHex(color);
+            child.castShadow = true;
+            child.receiveShadow = true;
+            const matName = child.material.name ? child.material.name.toLowerCase() : '';
+            if (matName.includes('body') || matName.includes('paint') || matName.includes('color')) {
+              child.material = child.material.clone();
+              child.material.color.setHex(color);
+            }
           }
         });
       } else {

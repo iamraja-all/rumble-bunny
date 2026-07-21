@@ -50,11 +50,13 @@ for (let i = 1; i <= 7; i++) {
 wss.on('connection', (ws) => {
   const clientId = `client-${++clientCounter}`;
   
+  // Create player entity (assigns a PID like 'P7')
   const pid = lobby.join(clientId);
-  if (!pid) {
-    ws.send('ERROR|Lobby Full');
-    ws.close();
-    return;
+  raceManager.registerPlayer(clientId);
+
+  // If the race is waiting, start the countdown now that a real player joined
+  if (raceManager.state === 'WAITING') {
+    raceManager.startCountdown();
   }
 
   console.log(`[+] Client connected: ${clientId} assigned ${pid}`);
