@@ -231,7 +231,23 @@ export class Renderer {
     const chassis = new THREE.Mesh(chassisGeo, chassisMat);
     chassis.position.y = 0.5;
     chassis.castShadow = true;
+    chassis.receiveShadow = true;
     group.add(chassis);
+
+    // ─ Neon Underglow ─
+    const underglow = new THREE.RectAreaLight(color, 2.0, 2.0, 3.5);
+    underglow.position.set(0, 0.1, 0);
+    underglow.lookAt(0, 0, 0); // Point straight down at the track
+    group.add(underglow);
+    
+    // ─ Front Bumper ─
+    const bumperGeo = new THREE.CylinderGeometry(0.3, 0.3, 2.2, 8);
+    const bumperMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+    const bumper = new THREE.Mesh(bumperGeo, bumperMat);
+    bumper.rotation.z = Math.PI / 2;
+    bumper.position.set(0, 0.4, -1.8);
+    bumper.castShadow = true;
+    group.add(bumper);
 
     // ─ Cockpit (rounded top) ─
     const cockpitGeo = new THREE.BoxGeometry(1.4, 0.5, 1.6);
@@ -243,6 +259,7 @@ export class Renderer {
     const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
     cockpit.position.set(0, 1.05, -0.2);
     cockpit.castShadow = true;
+    cockpit.receiveShadow = true;
     group.add(cockpit);
 
     // ─ Spoiler ─
@@ -251,6 +268,7 @@ export class Renderer {
     const spoiler = new THREE.Mesh(spoilerGeo, spoilerMat);
     spoiler.position.set(0, 1.2, 1.5);
     spoiler.castShadow = true;
+    spoiler.receiveShadow = true;
     group.add(spoiler);
 
     // Spoiler pylons
@@ -282,6 +300,7 @@ export class Renderer {
       wheel.rotation.z = Math.PI / 2; // Rotate so cylinder axis is along X
       wheel.position.set(pos.x, pos.y, pos.z);
       wheel.castShadow = true;
+      wheel.receiveShadow = true;
       group.add(wheel);
 
       // Hub cap
