@@ -12,7 +12,7 @@ import { serializeLedger, parseLedger } from './ledger.js';
  * Big-O: O(1) for join/leave/tick. O(N) where N <= 8 for serialize/parse state.
  */
 
-const MAX_PLAYERS = 8;
+const MAX_PLAYERS = 16;
 const START_POSITIONS = [
   { x: -10, y: 0, z: 0 },
   { x: 10,  y: 0, z: 0 },
@@ -22,6 +22,14 @@ const START_POSITIONS = [
   { x: 10,  y: 0, z: -40 },
   { x: -10, y: 0, z: -60 },
   { x: 10,  y: 0, z: -60 },
+  { x: -10, y: 0, z: -80 },
+  { x: 10,  y: 0, z: -80 },
+  { x: -10, y: 0, z: -100 },
+  { x: 10,  y: 0, z: -100 },
+  { x: -10, y: 0, z: -120 },
+  { x: 10,  y: 0, z: -120 },
+  { x: -10, y: 0, z: -140 },
+  { x: 10,  y: 0, z: -140 },
 ];
 
 export class Lobby {
