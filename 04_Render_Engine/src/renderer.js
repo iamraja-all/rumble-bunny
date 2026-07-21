@@ -87,10 +87,24 @@ export class Renderer {
           }
         });
         this.kartModelLoaded = true;
+
+        // Upgrade any procedural karts that were spawned before the GLTF finished loading!
+        for (const [id, oldMesh] of this.meshes.entries()) {
+          if (oldMesh.userData.isProceduralKart) {
+            // Remove old mesh from scene
+            this.scene.remove(oldMesh);
+            // Re-generate using the GLTF
+            const newMesh = this.getMeshForEntity({ id, type: 'VEHICLE' }, true);
+            // Copy transform
+            newMesh.position.copy(oldMesh.position);
+            newMesh.quaternion.copy(oldMesh.quaternion);
+            this.scene.add(newMesh);
+            this.meshes.set(id, newMesh);
+          }
+        }
       },
       undefined,
       () => {
-        // File not found — that's fine, we use the programmatic fallback
         console.log('ℹ️  No kart.glb found — using programmatic kart mesh');
         this.kartModelLoaded = false;
       }
@@ -171,6 +185,9 @@ export class Renderer {
     road.position.set(0, 0.01, -100);
     road.receiveShadow = true;
     this.scene.add(road);
+    
+    // Add 3D Stadium
+    this.setupStadium();
 
     // Starting line
     const startGeo = new THREE.PlaneGeometry(100, 5);
@@ -197,6 +214,62 @@ export class Renderer {
 
     // Finish line arch
     this.createCheckpointGate(0, -5, 40, 0xffffff, 'FINISH');
+  }
+
+  // ── STADIUM (HIGH FIDELITY ENVIRONMENT) ───────────────────────────────
+  setupStadium() {
+    const group = new THREE.Group();
+    
+    // Grandstands (Left and Right of the track)
+    const standLength = 260;
+    const standGeo = new THREE.BoxGeometry(20, 20, standLength);
+    const standMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    
+    // Left stand
+    const leftStand = new THREE.Mesh(standGeo, standMat);
+    leftStand.position.set(-60, 10, -100);
+    leftStand.rotation.z = -Math.PI / 8; // slanted seating
+    leftStand.castShadow = true;
+    group.add(leftStand);
+    
+    // Right stand
+    const rightStand = new THREE.Mesh(standGeo, standMat);
+    rightStand.position.set(60, 10, -100);
+    rightStand.rotation.z = Math.PI / 8;
+    rightStand.castShadow = true;
+    group.add(rightStand);
+
+    // Neon Billboards
+    const billboardGeo = new THREE.PlaneGeometry(30, 10);
+    const billboardMat = new THREE.MeshBasicMaterial({ color: 0x00ccff }); // Glowing cyan
+    
+    for (let i = 0; i < 4; i++) {
+      const zPos = -30 - (i * 60);
+      
+      const leftBoard = new THREE.Mesh(billboardGeo, billboardMat);
+      leftBoard.position.set(-45, 15, zPos);
+      leftBoard.rotation.y = Math.PI / 4;
+      group.add(leftBoard);
+      
+      const rightBoard = new THREE.Mesh(billboardGeo, billboardMat);
+      rightBoard.position.set(45, 15, zPos);
+      rightBoard.rotation.y = -Math.PI / 4;
+      group.add(rightBoard);
+    }
+    
+    // Enclosing stadium walls (Back and Front)
+    const wallGeo = new THREE.BoxGeometry(160, 40, 10);
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0x050505 });
+    
+    const backWall = new THREE.Mesh(wallGeo, wallMat);
+    backWall.position.set(0, 20, -250);
+    group.add(backWall);
+
+    const frontWall = new THREE.Mesh(wallGeo, wallMat);
+    frontWall.position.set(0, 20, 50);
+    group.add(frontWall);
+
+    this.scene.add(group);
   }
 
   createRamp3D(x, z, width, length, height) {
@@ -387,8 +460,8 @@ export class Renderer {
   }
 
   // ── ENTITY → MESH MAPPING ────────────────────────────────────────────
-  getMeshForEntity(entity) {
-    if (this.meshes.has(entity.id)) {
+  getMeshForEntity(entity, forceCreate = false) {
+    if (!forceCreate && this.meshes.has(entity.id)) {
       return this.meshes.get(entity.id);
     }
 
@@ -405,8 +478,8 @@ export class Renderer {
         
         // The Ferrari GLTF from three.js examples might need scaling or rotation
         // Adjust these values to match our 2x3.5 physics hitbox (facing -Z)
-        // (We can tweak these later if the car drives sideways!)
         mesh.rotation.y = Math.PI; // often facing +Z, we need -Z
+        mesh.scale.set(0.8, 0.8, 0.8);
 
         // Tint ONLY the car body, leave tires/glass alone
         mesh.traverse((child) => {
@@ -423,6 +496,7 @@ export class Renderer {
       } else {
         // Programmatic fallback
         mesh = this.createProceduralKart(color);
+        mesh.userData.isProceduralKart = true;
       }
 
       // Add Headlights (Dynamic SpotLight)
