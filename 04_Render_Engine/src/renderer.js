@@ -312,127 +312,82 @@ export class Renderer {
     this.scene.add(group);
   }
 
-  // ── PROGRAMMATIC KART (FALLBACK) ──────────────────────────────────────
-  createProceduralKart(color) {
+  // ── PROGRAMMATIC PS1 MUSCLE CAR ───────────────────────────────────────
+  createRetroMuscleCar(hexColor, pid) {
     const group = new THREE.Group();
+    
+    // PS1 Pixelated Racing Stripe Texture
+    const texCanvas = document.createElement('canvas');
+    texCanvas.width = 64; texCanvas.height = 64;
+    const ctx = texCanvas.getContext('2d');
+    ctx.fillStyle = '#' + hexColor.toString(16).padStart(6, '0');
+    ctx.fillRect(0, 0, 64, 64);
+    // Add white racing stripes
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(24, 0, 6, 64);
+    ctx.fillRect(34, 0, 6, 64);
+    // Draw some pixel "dirt"
+    ctx.fillStyle = '#000000';
+    ctx.globalAlpha = 0.2;
+    for(let i=0; i<30; i++) ctx.fillRect(Math.random()*64, Math.random()*64, 2, 2);
+    ctx.globalAlpha = 1.0;
 
-    // ─ Chassis ─
-    const chassisGeo = new THREE.BoxGeometry(2.0, 0.6, 3.5);
-    const chassisMat = new THREE.MeshPhongMaterial({
-      color,
-      specular: 0x444444,
-      shininess: 60,
-    });
-    const chassis = new THREE.Mesh(chassisGeo, chassisMat);
+    const bodyTex = new THREE.CanvasTexture(texCanvas);
+    bodyTex.magFilter = THREE.NearestFilter;
+    const bodyMat = new THREE.MeshLambertMaterial({ map: bodyTex });
+
+    // Lower Chassis (Blocky)
+    const chassisGeo = new THREE.BoxGeometry(2, 0.6, 4);
+    const chassis = new THREE.Mesh(chassisGeo, bodyMat);
     chassis.position.y = 0.5;
     chassis.castShadow = true;
-    chassis.receiveShadow = true;
     group.add(chassis);
 
-    // ─ Neon Underglow ─
-    const underglow = new THREE.RectAreaLight(color, 2.0, 2.0, 3.5);
-    underglow.position.set(0, 0.1, 0);
-    underglow.lookAt(0, 0, 0); // Point straight down at the track
-    group.add(underglow);
+    // Cabin (Blocky, slanted back)
+    const cabinGeo = new THREE.BoxGeometry(1.6, 0.5, 1.8);
+    // Black windows
+    const winMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    // Use an array of materials to map the sides differently (simple box mapping)
+    const cabinMats = [bodyMat, bodyMat, bodyMat, bodyMat, winMat, winMat];
+    const cabin = new THREE.Mesh(cabinGeo, cabinMats);
+    cabin.position.set(0, 1.05, -0.2);
+    cabin.castShadow = true;
+    group.add(cabin);
+
+    // Blocky Wheels
+    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.4, 8); // 8 segments for PS1 look!
+    wheelGeo.rotateZ(Math.PI / 2);
+    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
     
-    // ─ Front Bumper ─
-    const bumperGeo = new THREE.CylinderGeometry(0.3, 0.3, 2.2, 8);
-    const bumperMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
-    const bumper = new THREE.Mesh(bumperGeo, bumperMat);
-    bumper.rotation.z = Math.PI / 2;
-    bumper.position.set(0, 0.4, -1.8);
-    bumper.castShadow = true;
-    group.add(bumper);
-
-    // ─ Cockpit (rounded top) ─
-    const cockpitGeo = new THREE.BoxGeometry(1.4, 0.5, 1.6);
-    const cockpitMat = new THREE.MeshPhongMaterial({
-      color: 0x222222,
-      specular: 0x111111,
-      shininess: 80,
-    });
-    const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
-    cockpit.position.set(0, 1.05, -0.2);
-    cockpit.castShadow = true;
-    cockpit.receiveShadow = true;
-    group.add(cockpit);
-
-    // ─ Spoiler ─
-    const spoilerGeo = new THREE.BoxGeometry(2.2, 0.1, 0.4);
-    const spoilerMat = new THREE.MeshPhongMaterial({ color });
-    const spoiler = new THREE.Mesh(spoilerGeo, spoilerMat);
-    spoiler.position.set(0, 1.2, 1.5);
-    spoiler.castShadow = true;
-    spoiler.receiveShadow = true;
-    group.add(spoiler);
-
-    // Spoiler pylons
-    for (const side of [-0.8, 0.8]) {
-      const pylonGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
-      const pylonMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
-      const pylon = new THREE.Mesh(pylonGeo, pylonMat);
-      pylon.position.set(side, 0.95, 1.5);
-      group.add(pylon);
-    }
-
-    // ─ Wheels (4x) ─
-    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
-    const wheelMat = new THREE.MeshPhongMaterial({
-      color: 0x111111,
-      specular: 0x333333,
-      shininess: 30,
-    });
-
     const wheelPositions = [
-      { x: -1.1, y: 0.4, z: -1.2 }, // front-left
-      { x: 1.1, y: 0.4, z: -1.2 },  // front-right
-      { x: -1.1, y: 0.4, z: 1.2 },  // rear-left
-      { x: 1.1, y: 0.4, z: 1.2 },   // rear-right
+      [-1, 0.4, 1.2], [1, 0.4, 1.2], // Front
+      [-1, 0.4, -1.2], [1, 0.4, -1.2] // Rear
     ];
+    
+    wheelPositions.forEach(pos => {
+      const w = new THREE.Mesh(wheelGeo, wheelMat);
+      w.position.set(...pos);
+      w.castShadow = true;
+      group.add(w);
+    });
 
-    for (const pos of wheelPositions) {
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.rotation.z = Math.PI / 2; // Rotate so cylinder axis is along X
-      wheel.position.set(pos.x, pos.y, pos.z);
-      wheel.castShadow = true;
-      wheel.receiveShadow = true;
-      group.add(wheel);
-
-      // Hub cap
-      const hubGeo = new THREE.CircleGeometry(0.25, 8);
-      const hubMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
-      const hub = new THREE.Mesh(hubGeo, hubMat);
-      hub.rotation.y = pos.x > 0 ? Math.PI / 2 : -Math.PI / 2;
-      hub.position.set(
-        pos.x + (pos.x > 0 ? 0.16 : -0.16),
-        pos.y,
-        pos.z
-      );
-      group.add(hub);
-    }
-
-    // ─ Exhaust pipes ─
-    for (const side of [-0.5, 0.5]) {
-      const exGeo = new THREE.CylinderGeometry(0.12, 0.15, 0.6, 8);
-      const exMat = new THREE.MeshPhongMaterial({
-        color: 0x666666,
-        specular: 0x999999,
-        shininess: 100,
-      });
-      const exhaust = new THREE.Mesh(exGeo, exMat);
-      exhaust.rotation.x = Math.PI / 2;
-      exhaust.position.set(side, 0.5, 2.0);
-      group.add(exhaust);
-    }
-
-    // ─ Headlights ─
-    for (const side of [-0.6, 0.6]) {
-      const lightGeo = new THREE.SphereGeometry(0.15, 8, 8);
-      const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
-      const headlight = new THREE.Mesh(lightGeo, lightMat);
-      headlight.position.set(side, 0.7, -1.8);
-      group.add(headlight);
-    }
+    // Retro Player Tag above car
+    const tagCanvas = document.createElement('canvas');
+    tagCanvas.width = 128; tagCanvas.height = 32;
+    const tctx = tagCanvas.getContext('2d');
+    tctx.fillStyle = 'rgba(0,0,0,0.5)'; tctx.fillRect(0,0,128,32);
+    tctx.fillStyle = '#fff';
+    tctx.font = 'bold 20px "Courier New"'; // Monospace retro font
+    tctx.textAlign = 'center';
+    tctx.fillText(pid || 'P?', 64, 22);
+    const tagTex = new THREE.CanvasTexture(tagCanvas);
+    tagTex.magFilter = THREE.NearestFilter;
+    const tagMat = new THREE.MeshBasicMaterial({ map: tagTex, transparent: true, side: THREE.DoubleSide });
+    const tagGeo = new THREE.PlaneGeometry(1.5, 0.4);
+    const tag = new THREE.Mesh(tagGeo, tagMat);
+    tag.position.set(0, 2, 0);
+    tag.rotation.y = Math.PI; // Face backwards toward camera
+    group.add(tag);
 
     return group;
   }
