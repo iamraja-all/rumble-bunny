@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { ParticleSystem } from './particles.js';
 
 /**
@@ -58,10 +60,7 @@ export class Renderer {
 
     this.setupLighting();
     this.setupEnvironment();
-
-    // PS1 Retro Render Effect: Force low resolution and disable antialiasing
-    this.renderer.setPixelRatio(0.33); // Renders at 1/3 resolution then scales up
-    this.renderer.antialias = false;
+    this.loadAssets();
 
     // Smooth camera follow state: High and Wide angle for better visibility
     this._camPos = new THREE.Vector3(0, 10, 18);
@@ -74,7 +73,66 @@ export class Renderer {
     });
   }
 
-  // ── (ASSET LOADING REMOVED FOR PS1 RETRO AESTHETIC) ─────────────────
+  // ── ASSET LOADING ─────────────────────────────────────────────────────
+  loadAssets() {
+    const loader = new GLTFLoader();
+    
+    // Add Draco decompression support
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('/draco/');
+    loader.setDRACOLoader(dracoLoader);
+    
+    // 1. Load City Environment (Littlest Tokyo CC0)
+    loader.load(
+      '/models/city.glb?v=' + Date.now(),
+      (gltf) => {
+        console.log('✅ City environment loaded successfully');
+        const city = gltf.scene;
+        // Scale it massively to surround the track
+        city.scale.set(0.8, 0.8, 0.8);
+        city.position.set(50, -5, -150); 
+        this.scene.add(city);
+      },
+      undefined,
+      (err) => console.error('Failed to load city:', err)
+    );
+
+    // 2. Load Premium F1 / Sports Car
+    loader.load(
+      '/models/kart.glb?v=' + Date.now(),
+      (gltf) => {
+        console.log('✅ GLTF kart model loaded successfully');
+        this.kartModelTemplate = gltf.scene;
+        this.kartModelTemplate.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        this.kartModelLoaded = true;
+
+        // Upgrade any procedural karts that were spawned before the GLTF finished loading!
+        for (const [id, oldMesh] of this.meshes.entries()) {
+          if (oldMesh.userData.isProceduralKart) {
+            // Remove old mesh from scene
+            this.scene.remove(oldMesh);
+            // Re-generate using the GLTF
+            const newMesh = this.getMeshForEntity({ id, type: 'VEHICLE' }, true);
+            // Copy transform
+            newMesh.position.copy(oldMesh.position);
+            newMesh.quaternion.copy(oldMesh.quaternion);
+            this.scene.add(newMesh);
+            this.meshes.set(id, newMesh);
+          }
+        }
+      },
+      undefined,
+      (err) => {
+        console.error('ℹ️  No kart.glb found — using programmatic kart mesh', err);
+        this.kartModelLoaded = false;
+      }
+    );
+  }
 
   // ── LIGHTING ──────────────────────────────────────────────────────────
   setupLighting() {
@@ -99,21 +157,19 @@ export class Renderer {
 
   // ── ENVIRONMENT ───────────────────────────────────────────────────────
   setupEnvironment() {
-    // PS1 Grass Texture (Low Res 64x64)
+    // Procedural Grass Texture
     const grassCanvas = document.createElement('canvas');
-    grassCanvas.width = 64; grassCanvas.height = 64;
+    grassCanvas.width = 512; grassCanvas.height = 512;
     const gctx = grassCanvas.getContext('2d');
-    gctx.fillStyle = '#2d5a27'; gctx.fillRect(0, 0, 64, 64);
-    for (let i = 0; i < 500; i++) {
-      gctx.fillStyle = Math.random() > 0.5 ? '#24491f' : '#45853b';
-      gctx.fillRect(Math.random() * 64, Math.random() * 64, 2, 2);
+    gctx.fillStyle = '#2d5a27'; gctx.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 10000; i++) {
+      gctx.fillStyle = Math.random() > 0.5 ? '#24491f' : '#366e2f';
+      gctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
     }
     const grassTex = new THREE.CanvasTexture(grassCanvas);
     grassTex.wrapS = THREE.RepeatWrapping;
     grassTex.wrapT = THREE.RepeatWrapping;
     grassTex.repeat.set(50, 50);
-    grassTex.magFilter = THREE.NearestFilter; // PS1 Crunchy Pixels
-    grassTex.minFilter = THREE.NearestFilter;
 
     // Ground plane
     const groundGeo = new THREE.PlaneGeometry(1000, 1000);
@@ -123,26 +179,24 @@ export class Renderer {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // PS1 Asphalt Texture (Low Res 64x64)
+    // Procedural Asphalt Texture
     const roadCanvas = document.createElement('canvas');
-    roadCanvas.width = 64; roadCanvas.height = 64;
+    roadCanvas.width = 512; roadCanvas.height = 512;
     const rctx = roadCanvas.getContext('2d');
-    rctx.fillStyle = '#222'; rctx.fillRect(0, 0, 64, 64);
-    for (let i = 0; i < 500; i++) {
-      rctx.fillStyle = Math.random() > 0.5 ? '#1a1a1a' : '#333';
-      rctx.fillRect(Math.random() * 64, Math.random() * 64, 2, 2);
+    rctx.fillStyle = '#1a1a1a'; rctx.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 20000; i++) {
+      rctx.fillStyle = Math.random() > 0.5 ? '#111' : '#222';
+      rctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
     }
     // Track boundaries (white lines)
-    rctx.fillStyle = '#dddddd';
-    rctx.fillRect(2, 0, 4, 64); // left line
-    rctx.fillRect(64 - 6, 0, 4, 64); // right line
+    rctx.fillStyle = '#ffffff';
+    rctx.fillRect(10, 0, 15, 512); // left line
+    rctx.fillRect(512 - 25, 0, 15, 512); // right line
     
     const roadTex = new THREE.CanvasTexture(roadCanvas);
     roadTex.wrapS = THREE.RepeatWrapping;
     roadTex.wrapT = THREE.RepeatWrapping;
     roadTex.repeat.set(1, 50);
-    roadTex.magFilter = THREE.NearestFilter;
-    roadTex.minFilter = THREE.NearestFilter;
 
     // Road plane (X: -40 to 40, Z: +50 to -250)
     const roadWidth = 80; // Total track width is 80 (±40)
@@ -155,24 +209,15 @@ export class Renderer {
     road.receiveShadow = true;
     this.scene.add(road);
     
-    // PS1 Checkered Starting Line
-    const checkCanvas = document.createElement('canvas');
-    checkCanvas.width = 64; checkCanvas.height = 64;
-    const cctx = checkCanvas.getContext('2d');
-    cctx.fillStyle = '#fff'; cctx.fillRect(0, 0, 64, 64);
-    cctx.fillStyle = '#000';
-    cctx.fillRect(0, 0, 32, 32); cctx.fillRect(32, 32, 32, 32);
-    const checkTex = new THREE.CanvasTexture(checkCanvas);
-    checkTex.wrapS = THREE.RepeatWrapping; checkTex.wrapT = THREE.RepeatWrapping;
-    checkTex.repeat.set(20, 2);
-    checkTex.magFilter = THREE.NearestFilter;
-    
-    const startGeo = new THREE.PlaneGeometry(80, 10);
-    const startMat = new THREE.MeshLambertMaterial({ map: checkTex });
+    // Add 3D Stadium
+    this.setupStadium();
+
+    // Starting line
+    const startGeo = new THREE.PlaneGeometry(100, 5);
+    const startMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const startLine = new THREE.Mesh(startGeo, startMat);
     startLine.rotation.x = -Math.PI / 2;
-    startLine.position.y = 0.02;
-    startLine.receiveShadow = true;
+    startLine.position.y = 0.01;
     this.scene.add(startLine);
 
     // Ramps — use 3D wedge shapes instead of flat planes
@@ -312,82 +357,127 @@ export class Renderer {
     this.scene.add(group);
   }
 
-  // ── PROGRAMMATIC PS1 MUSCLE CAR ───────────────────────────────────────
-  createRetroMuscleCar(hexColor, pid) {
+  // ── PROGRAMMATIC KART (FALLBACK) ──────────────────────────────────────
+  createProceduralKart(color) {
     const group = new THREE.Group();
-    
-    // PS1 Pixelated Racing Stripe Texture
-    const texCanvas = document.createElement('canvas');
-    texCanvas.width = 64; texCanvas.height = 64;
-    const ctx = texCanvas.getContext('2d');
-    ctx.fillStyle = '#' + hexColor.toString(16).padStart(6, '0');
-    ctx.fillRect(0, 0, 64, 64);
-    // Add white racing stripes
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(24, 0, 6, 64);
-    ctx.fillRect(34, 0, 6, 64);
-    // Draw some pixel "dirt"
-    ctx.fillStyle = '#000000';
-    ctx.globalAlpha = 0.2;
-    for(let i=0; i<30; i++) ctx.fillRect(Math.random()*64, Math.random()*64, 2, 2);
-    ctx.globalAlpha = 1.0;
 
-    const bodyTex = new THREE.CanvasTexture(texCanvas);
-    bodyTex.magFilter = THREE.NearestFilter;
-    const bodyMat = new THREE.MeshLambertMaterial({ map: bodyTex });
-
-    // Lower Chassis (Blocky)
-    const chassisGeo = new THREE.BoxGeometry(2, 0.6, 4);
-    const chassis = new THREE.Mesh(chassisGeo, bodyMat);
+    // ─ Chassis ─
+    const chassisGeo = new THREE.BoxGeometry(2.0, 0.6, 3.5);
+    const chassisMat = new THREE.MeshPhongMaterial({
+      color,
+      specular: 0x444444,
+      shininess: 60,
+    });
+    const chassis = new THREE.Mesh(chassisGeo, chassisMat);
     chassis.position.y = 0.5;
     chassis.castShadow = true;
+    chassis.receiveShadow = true;
     group.add(chassis);
 
-    // Cabin (Blocky, slanted back)
-    const cabinGeo = new THREE.BoxGeometry(1.6, 0.5, 1.8);
-    // Black windows
-    const winMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
-    // Use an array of materials to map the sides differently (simple box mapping)
-    const cabinMats = [bodyMat, bodyMat, bodyMat, bodyMat, winMat, winMat];
-    const cabin = new THREE.Mesh(cabinGeo, cabinMats);
-    cabin.position.set(0, 1.05, -0.2);
-    cabin.castShadow = true;
-    group.add(cabin);
+    // ─ Neon Underglow ─
+    const underglow = new THREE.RectAreaLight(color, 2.0, 2.0, 3.5);
+    underglow.position.set(0, 0.1, 0);
+    underglow.lookAt(0, 0, 0); // Point straight down at the track
+    group.add(underglow);
+    
+    // ─ Front Bumper ─
+    const bumperGeo = new THREE.CylinderGeometry(0.3, 0.3, 2.2, 8);
+    const bumperMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+    const bumper = new THREE.Mesh(bumperGeo, bumperMat);
+    bumper.rotation.z = Math.PI / 2;
+    bumper.position.set(0, 0.4, -1.8);
+    bumper.castShadow = true;
+    group.add(bumper);
 
-    // Blocky Wheels
-    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.4, 8); // 8 segments for PS1 look!
-    wheelGeo.rotateZ(Math.PI / 2);
-    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
-    
-    const wheelPositions = [
-      [-1, 0.4, 1.2], [1, 0.4, 1.2], // Front
-      [-1, 0.4, -1.2], [1, 0.4, -1.2] // Rear
-    ];
-    
-    wheelPositions.forEach(pos => {
-      const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.position.set(...pos);
-      w.castShadow = true;
-      group.add(w);
+    // ─ Cockpit (rounded top) ─
+    const cockpitGeo = new THREE.BoxGeometry(1.4, 0.5, 1.6);
+    const cockpitMat = new THREE.MeshPhongMaterial({
+      color: 0x222222,
+      specular: 0x111111,
+      shininess: 80,
+    });
+    const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+    cockpit.position.set(0, 1.05, -0.2);
+    cockpit.castShadow = true;
+    cockpit.receiveShadow = true;
+    group.add(cockpit);
+
+    // ─ Spoiler ─
+    const spoilerGeo = new THREE.BoxGeometry(2.2, 0.1, 0.4);
+    const spoilerMat = new THREE.MeshPhongMaterial({ color });
+    const spoiler = new THREE.Mesh(spoilerGeo, spoilerMat);
+    spoiler.position.set(0, 1.2, 1.5);
+    spoiler.castShadow = true;
+    spoiler.receiveShadow = true;
+    group.add(spoiler);
+
+    // Spoiler pylons
+    for (const side of [-0.8, 0.8]) {
+      const pylonGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
+      const pylonMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+      const pylon = new THREE.Mesh(pylonGeo, pylonMat);
+      pylon.position.set(side, 0.95, 1.5);
+      group.add(pylon);
+    }
+
+    // ─ Wheels (4x) ─
+    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+    const wheelMat = new THREE.MeshPhongMaterial({
+      color: 0x111111,
+      specular: 0x333333,
+      shininess: 30,
     });
 
-    // Retro Player Tag above car
-    const tagCanvas = document.createElement('canvas');
-    tagCanvas.width = 128; tagCanvas.height = 32;
-    const tctx = tagCanvas.getContext('2d');
-    tctx.fillStyle = 'rgba(0,0,0,0.5)'; tctx.fillRect(0,0,128,32);
-    tctx.fillStyle = '#fff';
-    tctx.font = 'bold 20px "Courier New"'; // Monospace retro font
-    tctx.textAlign = 'center';
-    tctx.fillText(pid || 'P?', 64, 22);
-    const tagTex = new THREE.CanvasTexture(tagCanvas);
-    tagTex.magFilter = THREE.NearestFilter;
-    const tagMat = new THREE.MeshBasicMaterial({ map: tagTex, transparent: true, side: THREE.DoubleSide });
-    const tagGeo = new THREE.PlaneGeometry(1.5, 0.4);
-    const tag = new THREE.Mesh(tagGeo, tagMat);
-    tag.position.set(0, 2, 0);
-    tag.rotation.y = Math.PI; // Face backwards toward camera
-    group.add(tag);
+    const wheelPositions = [
+      { x: -1.1, y: 0.4, z: -1.2 }, // front-left
+      { x: 1.1, y: 0.4, z: -1.2 },  // front-right
+      { x: -1.1, y: 0.4, z: 1.2 },  // rear-left
+      { x: 1.1, y: 0.4, z: 1.2 },   // rear-right
+    ];
+
+    for (const pos of wheelPositions) {
+      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.rotation.z = Math.PI / 2; // Rotate so cylinder axis is along X
+      wheel.position.set(pos.x, pos.y, pos.z);
+      wheel.castShadow = true;
+      wheel.receiveShadow = true;
+      group.add(wheel);
+
+      // Hub cap
+      const hubGeo = new THREE.CircleGeometry(0.25, 8);
+      const hubMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
+      const hub = new THREE.Mesh(hubGeo, hubMat);
+      hub.rotation.y = pos.x > 0 ? Math.PI / 2 : -Math.PI / 2;
+      hub.position.set(
+        pos.x + (pos.x > 0 ? 0.16 : -0.16),
+        pos.y,
+        pos.z
+      );
+      group.add(hub);
+    }
+
+    // ─ Exhaust pipes ─
+    for (const side of [-0.5, 0.5]) {
+      const exGeo = new THREE.CylinderGeometry(0.12, 0.15, 0.6, 8);
+      const exMat = new THREE.MeshPhongMaterial({
+        color: 0x666666,
+        specular: 0x999999,
+        shininess: 100,
+      });
+      const exhaust = new THREE.Mesh(exGeo, exMat);
+      exhaust.rotation.x = Math.PI / 2;
+      exhaust.position.set(side, 0.5, 2.0);
+      group.add(exhaust);
+    }
+
+    // ─ Headlights ─
+    for (const side of [-0.6, 0.6]) {
+      const lightGeo = new THREE.SphereGeometry(0.15, 8, 8);
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
+      const headlight = new THREE.Mesh(lightGeo, lightMat);
+      headlight.position.set(side, 0.7, -1.8);
+      group.add(headlight);
+    }
 
     return group;
   }
@@ -405,8 +495,32 @@ export class Renderer {
       const slotIndex = parseInt(entity.id.replace('P', ''), 10) || 0;
       const color = PLAYER_COLORS[slotIndex % PLAYER_COLORS.length];
 
-      mesh = this.createRetroMuscleCar(color, entity.id);
-      mesh.userData.isProceduralKart = false;
+      if (this.kartModelLoaded && this.kartModelTemplate) {
+        // Clone the GLTF model
+        mesh = this.kartModelTemplate.clone();
+        
+        // The Ferrari GLTF from three.js examples might need scaling or rotation
+        // Adjust these values to match our 2x3.5 physics hitbox (facing -Z)
+        mesh.rotation.y = Math.PI; // often facing +Z, we need -Z
+        mesh.scale.set(0.8, 0.8, 0.8);
+
+        // Tint ONLY the car body, leave tires/glass alone
+        mesh.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            const matName = child.material.name ? child.material.name.toLowerCase() : '';
+            if (matName.includes('body') || matName.includes('paint') || matName.includes('color')) {
+              child.material = child.material.clone();
+              child.material.color.setHex(color);
+            }
+          }
+        });
+      } else {
+        // Programmatic fallback
+        mesh = this.createProceduralKart(color);
+        mesh.userData.isProceduralKart = true;
+      }
 
       // Add Headlights (Dynamic SpotLight)
       const headlight = new THREE.SpotLight(0xffffff, 2.0);
@@ -531,10 +645,11 @@ export class Renderer {
         if (entity.state === 'CRASHED') {
           setKartColor(0x333333);
         } else if (entity.state === 'BOOSTING') {
+          // Pulse between orange and base color
           const pulse = Math.sin(time * 10) > 0 ? 0xffaa00 : 0xff6600;
           setKartColor(pulse);
         } else {
-          // Keep texture base color
+          setKartColor(baseColor);
         }
 
         // --- Particles Emission ---
