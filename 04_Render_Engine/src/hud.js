@@ -211,14 +211,14 @@ export class HUD {
   injectStyles() {
     const style = document.createElement('style');
     style.textContent = `
-      @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
       #hud {
         position: fixed;
         top: 0; left: 0; right: 0; bottom: 0;
         pointer-events: none;
         z-index: 100;
-        font-family: 'Orbitron', monospace, sans-serif;
+        font-family: 'Press Start 2P', monospace, sans-serif;
         color: #fff;
       }
 
