@@ -111,14 +111,11 @@ export class Renderer {
         });
         this.kartModelLoaded = true;
 
-        // Upgrade any procedural karts that were spawned before the GLTF finished loading!
+        // Upgrade any karts that were spawned before the GLTF finished loading!
         for (const [id, oldMesh] of this.meshes.entries()) {
           if (oldMesh.userData.isProceduralKart) {
-            // Remove old mesh from scene
             this.scene.remove(oldMesh);
-            // Re-generate using the GLTF
             const newMesh = this.getMeshForEntity({ id, type: 'VEHICLE' }, true);
-            // Copy transform
             newMesh.position.copy(oldMesh.position);
             newMesh.quaternion.copy(oldMesh.quaternion);
             this.scene.add(newMesh);
