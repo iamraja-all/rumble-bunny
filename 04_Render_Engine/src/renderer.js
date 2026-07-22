@@ -88,9 +88,9 @@ export class Renderer {
       (gltf) => {
         console.log('✅ City environment loaded successfully');
         const city = gltf.scene;
-        // Scale it massively to surround the track
-        city.scale.set(0.8, 0.8, 0.8);
-        city.position.set(50, -5, -150); 
+        // Littlest Tokyo is huge, scale it down
+        city.scale.set(0.05, 0.05, 0.05);
+        city.position.set(0, -2, -50); 
         this.scene.add(city);
       },
       undefined,
@@ -133,12 +133,12 @@ export class Renderer {
 
   // ── LIGHTING ──────────────────────────────────────────────────────────
   setupLighting() {
-    // Hemisphere light for natural sky/ground ambient (dimmed for twilight)
-    const hemiLight = new THREE.HemisphereLight(0x444466, 0x112211, 0.3);
+    // Hemisphere light for natural sky/ground ambient (brightened for PBR)
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
     this.scene.add(hemiLight);
 
-    // Main directional (moonlight)
-    const dirLight = new THREE.DirectionalLight(0x88bbff, 0.4);
+    // Main directional (sunlight)
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
     dirLight.position.set(50, 100, 50);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 2048;
@@ -150,6 +150,10 @@ export class Renderer {
     dirLight.shadow.camera.near = 1;
     dirLight.shadow.camera.far = 300;
     this.scene.add(dirLight);
+    
+    // Ambient light to ensure PBR materials are never pitch black
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+    this.scene.add(ambientLight);
   }
 
   // ── ENVIRONMENT ───────────────────────────────────────────────────────
