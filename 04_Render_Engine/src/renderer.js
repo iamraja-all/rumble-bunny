@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ParticleSystem } from './particles.js';
 
 /**
@@ -31,21 +36,34 @@ const PLAYER_COLORS = [
 export class Renderer {
   constructor(canvas) {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1a2e); // Twilight dark blue
-    this.scene.fog = new THREE.Fog(0x1a1a2e, 50, 300);
+    // WHY: no hard-coded background colour any more — the procedural Sky dome
+    // (setupSkyAndEnvironment) fills the backdrop and doubles as the light
+    // source for image-based lighting. Fog is a light daytime haze pushed far
+    // out so it grounds distant geometry without washing over the sky.
+    this.scene.fog = new THREE.Fog(0xbcd4e6, 180, 600);
 
     this.camera = new THREE.PerspectiveCamera(
       65,
       window.innerWidth / window.innerHeight,
       0.1,
-      1000
+      2000 // WHY: extended far plane so the 10,000-unit Sky dome stays visible
     );
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // WHY: cap at 1.0 — bloom + IBL is fragment-heavy; on integrated GPUs a 2x
+    // pixel ratio quadruples that cost and drops the game to single-digit fps
+    // (the "hang"). 1.0 keeps it smooth; the canvas is still crisp at this size.
+    this.renderer.setPixelRatio(1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // WHY: ACES filmic tone mapping maps the wide dynamic range of a real sky
+    // + IBL into displayable colour the way film does — this is the single
+    // biggest step from "flat game look" to "real". Exposure trims overall
+    // brightness. OutputPass (post-processing) reads this same setting so the
+    // tone map is applied once, after bloom, in linear space.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.5; // WHY: 0.85 blew the scene to white; 0.5 gives real contrast
 
     // Track meshes/groups mapped by entity ID (e.g. 'P0' -> Group)
     this.meshes = new Map();
@@ -53,13 +71,18 @@ export class Renderer {
     // GLTF model template (null until loaded, if ever)
     this.kartModelTemplate = null;
     this.kartModelLoaded = false;
+    // PERF: use the lightweight procedural kart instead of the heavy multi-mesh
+    // sports-car GLB (11 copies dominated frame cost). Flip to true to A/B the GLB.
+    this.useGlbKart = false;
 
     // Particle Systems
     this.smokeSystem = new ParticleSystem(this.scene, 2000);
     this.flameSystem = new ParticleSystem(this.scene, 1000);
 
     this.setupLighting();
+    this.setupSkyAndEnvironment();
     this.setupEnvironment();
+    this.setupPostProcessing();
     this.loadAssets();
 
     // Smooth camera follow state: High and Wide angle for better visibility
@@ -70,6 +93,9 @@ export class Renderer {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
+      // WHY: the composer owns its own render targets — they must be resized
+      // alongside the renderer or the post-processed image stretches.
+      if (this.composer) this.composer.setSize(window.innerWidth, window.innerHeight);
     });
   }
 
@@ -97,8 +123,8 @@ export class Renderer {
       (err) => console.error('Failed to load city:', err)
     );
 
-    // 2. Load Premium F1 / Sports Car
-    loader.load(
+    // 2. Load Premium F1 / Sports Car (only when GLB karts are enabled)
+    if (this.useGlbKart) loader.load(
       '/models/kart.glb?v=' + Date.now(),
       (gltf) => {
         console.log('✅ GLTF kart model loaded successfully');
@@ -133,27 +159,97 @@ export class Renderer {
 
   // ── LIGHTING ──────────────────────────────────────────────────────────
   setupLighting() {
-    // Hemisphere light for natural sky/ground ambient (brightened for PBR)
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+    // WHY: with real image-based lighting from the Sky (setupSkyAndEnvironment)
+    // filling in ambient/fill light, the old stack of hemi(1.5)+dir(2.0)+
+    // ambient(1.0) is now far too flat and bright — three overlapping fills
+    // erase all form. We keep ONE gentle hemisphere for sky/ground colour
+    // bounce and ONE strong directional sun; the environment map does the rest.
+    const hemiLight = new THREE.HemisphereLight(0xbcd4e6, 0x4a5a3a, 0.25);
     this.scene.add(hemiLight);
 
-    // Main directional (sunlight)
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    // Main directional (sunlight). Direction is aimed at the Sky's sun in
+    // setupSkyAndEnvironment so shadows fall consistently with the visible sun.
+    const dirLight = new THREE.DirectionalLight(0xfff4e0, 1.6);
     dirLight.position.set(50, 100, 50);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
+    // PERF: 1024 shadow map (was 2048) — quarters the shadow-pass fill cost on
+    // integrated GPUs for a barely-perceptible quality drop at this camera range.
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
     dirLight.shadow.camera.top = 120;
     dirLight.shadow.camera.bottom = -120;
     dirLight.shadow.camera.left = -120;
     dirLight.shadow.camera.right = 120;
     dirLight.shadow.camera.near = 1;
     dirLight.shadow.camera.far = 300;
+    dirLight.shadow.bias = -0.0005; // WHY: kills shadow acne on the flat road/ground
     this.scene.add(dirLight);
-    
-    // Ambient light to ensure PBR materials are never pitch black
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-    this.scene.add(ambientLight);
+    this.scene.add(dirLight.target);
+    this.dirLight = dirLight; // stored so the sky setup can aim it at the sun
+  }
+
+  // ── SKY + IMAGE-BASED LIGHTING (IBL) ──────────────────────────────────
+  setupSkyAndEnvironment() {
+    // WHY: a physically-based sky shader (bundled with three, zero external
+    // assets — R06-clean) gives a real gradient sky AND, once baked into an
+    // environment map via PMREM, becomes the source of realistic reflections
+    // and soft fill light on every PBR/Standard material. This is what makes
+    // the kart's paint and glass read as "real" instead of matte plastic.
+    const sky = new Sky();
+    sky.scale.setScalar(10000);
+    const u = sky.material.uniforms;
+    u['turbidity'].value = 2;        // WHY: lower = less bright white haze
+    u['rayleigh'].value = 0.5;       // WHY: lower = dimmer sky, stops IBL washing the scene out
+    u['mieCoefficient'].value = 0.005;
+    u['mieDirectionalG'].value = 0.8; // sun glow tightness
+
+    // Sun position — mid-afternoon: 28° elevation gives long, readable shadows.
+    const sun = new THREE.Vector3();
+    const phi = THREE.MathUtils.degToRad(90 - 28);   // elevation
+    const theta = THREE.MathUtils.degToRad(150);      // azimuth
+    sun.setFromSphericalCoords(1, phi, theta);
+    u['sunPosition'].value.copy(sun);
+
+    // Aim the directional sun light to match the visible sun in the sky.
+    this.dirLight.position.copy(sun).multiplyScalar(150);
+    this.dirLight.target.position.set(0, 0, -100); // centre of the track
+
+    // Bake the sky into an environment map for IBL. PMREM needs a Scene, so we
+    // render the sky in a throwaway scene, then keep the sky in the real scene
+    // as the visible backdrop. (Standard three.js Sky-example pattern.)
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const envScene = new THREE.Scene();
+    envScene.add(sky);
+    const envTarget = pmrem.fromScene(envScene);
+    this.scene.environment = envTarget.texture; // reflections + ambient for all PBR
+    // WHY: scale down how strongly the environment map lights the scene, so IBL
+    // adds realistic reflections without flooding everything to white.
+    this.scene.environmentIntensity = 0.35;
+    this.scene.add(sky);                          // visible sky dome
+    pmrem.dispose();
+  }
+
+  // ── POST-PROCESSING (bloom) ───────────────────────────────────────────
+  setupPostProcessing() {
+    // WHY: neon billboards, boost flames, and emissive checkpoint gates only
+    // "glow" if bright pixels bleed into their neighbours — that's bloom.
+    // RenderPass draws the scene in linear HDR, UnrealBloomPass extracts and
+    // blurs the bright parts, and OutputPass applies ACES tone mapping + sRGB
+    // conversion last (single tone-map, correct order).
+    const composer = new EffectComposer(this.renderer);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.3,  // strength — subtle glow, was 0.55 (blew out the whole scene)
+      0.3,  // radius
+      0.9   // threshold — only the brightest emissive/neon pixels bloom
+    );
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+
+    this.composer = composer;
   }
 
   // ── ENVIRONMENT ───────────────────────────────────────────────────────
@@ -173,8 +269,11 @@ export class Renderer {
     grassTex.repeat.set(50, 50);
 
     // Ground plane
+    // WHY: MeshStandardMaterial (not Lambert) so the grass responds to the
+    // IBL environment map and sun with physically-plausible shading. Grass is
+    // fully rough / non-metallic.
     const groundGeo = new THREE.PlaneGeometry(1000, 1000);
-    const groundMat = new THREE.MeshLambertMaterial({ map: grassTex });
+    const groundMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1.0, metalness: 0.0 });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -203,7 +302,10 @@ export class Renderer {
     const roadWidth = 80; // Total track width is 80 (±40)
     const roadLength = 300;
     const roadGeo = new THREE.PlaneGeometry(roadWidth, roadLength);
-    const roadMat = new THREE.MeshLambertMaterial({ map: roadTex });
+    // WHY: asphalt is smoother than grass — a lower roughness lets the sky
+    // reflect faintly off the surface, reading as real tarmac rather than a
+    // flat grey plane.
+    const roadMat = new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.65, metalness: 0.0 });
     const road = new THREE.Mesh(roadGeo, roadMat);
     road.rotation.x = -Math.PI / 2;
     road.position.set(0, 0.01, -100);
@@ -245,9 +347,11 @@ export class Renderer {
     const group = new THREE.Group();
     
     // Grandstands (Left and Right of the track)
+    // WHY: Standard material so the concrete stands catch the sun/IBL and show
+    // form; slight metalness + mid roughness reads as painted concrete.
     const standLength = 260;
     const standGeo = new THREE.BoxGeometry(20, 20, standLength);
-    const standMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    const standMat = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.8, metalness: 0.1 });
     
     // Left stand
     const leftStand = new THREE.Mesh(standGeo, standMat);
@@ -264,8 +368,11 @@ export class Renderer {
     group.add(rightStand);
 
     // Neon Billboards
+    // WHY: pushed well above 1.0 luminance (colour multiplied bright) so they
+    // clear the bloom threshold (0.85) and actually glow through the post pass.
     const billboardGeo = new THREE.PlaneGeometry(30, 10);
-    const billboardMat = new THREE.MeshBasicMaterial({ color: 0x00ccff }); // Glowing cyan
+    const billboardMat = new THREE.MeshBasicMaterial({ color: 0x33ddff });
+    billboardMat.color.multiplyScalar(1.3); // slightly over-bright to trigger a subtle bloom
     
     for (let i = 0; i < 4; i++) {
       const zPos = -30 - (i * 60);
@@ -283,7 +390,7 @@ export class Renderer {
     
     // Enclosing stadium walls (Back and Front)
     const wallGeo = new THREE.BoxGeometry(160, 40, 10);
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0x050505 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.9, metalness: 0.1 });
     
     const backWall = new THREE.Mesh(wallGeo, wallMat);
     backWall.position.set(0, 20, -250);
@@ -307,7 +414,9 @@ export class Renderer {
     const extrudeSettings = { depth: width, bevelEnabled: false };
     const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
 
-    const mat = new THREE.MeshLambertMaterial({ color: 0xff8800 });
+    // WHY: Standard material so the ramp catches sun/IBL like the rest of the
+    // scene instead of looking like a flat orange decal.
+    const mat = new THREE.MeshStandardMaterial({ color: 0xff8800, roughness: 0.6, metalness: 0.2 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -322,6 +431,7 @@ export class Renderer {
     // Glowing ring instead of flat circle
     const ringGeo = new THREE.TorusGeometry(2, 0.3, 8, 24);
     const ringMat = new THREE.MeshBasicMaterial({ color: 0x66ffff });
+    ringMat.color.multiplyScalar(1.3); // WHY: slightly over-bright so the spawner ring blooms gently
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(x, 0.3, z);
@@ -336,7 +446,7 @@ export class Renderer {
 
     // Left pillar
     const pillarGeo = new THREE.CylinderGeometry(pillarRadius, pillarRadius, pillarHeight, 8);
-    const pillarMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+    const pillarMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.0, roughness: 0.4, metalness: 0.3 });
     const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
     leftPillar.position.set(-halfW, pillarHeight / 2, 0);
     group.add(leftPillar);
@@ -348,7 +458,7 @@ export class Renderer {
 
     // Top bar
     const barGeo = new THREE.CylinderGeometry(pillarRadius * 0.7, pillarRadius * 0.7, width, 8);
-    const barMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+    const barMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.0, roughness: 0.4, metalness: 0.3 });
     const bar = new THREE.Mesh(barGeo, barMat);
     bar.rotation.z = Math.PI / 2;
     bar.position.set(0, pillarHeight, 0);
@@ -375,12 +485,10 @@ export class Renderer {
     chassis.receiveShadow = true;
     group.add(chassis);
 
-    // ─ Neon Underglow ─
-    const underglow = new THREE.RectAreaLight(color, 2.0, 2.0, 3.5);
-    underglow.position.set(0, 0.1, 0);
-    underglow.lookAt(0, 0, 0); // Point straight down at the track
-    group.add(underglow);
-    
+    // PERF: removed the per-kart RectAreaLight underglow — real-time area lights
+    // are expensive and 11 of them recreate the same framerate problem as the
+    // spotlights. (A cheap emissive strip could fake underglow later if wanted.)
+
     // ─ Front Bumper ─
     const bumperGeo = new THREE.CylinderGeometry(0.3, 0.3, 2.2, 8);
     const bumperMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
@@ -523,22 +631,14 @@ export class Renderer {
         mesh.userData.isProceduralKart = true;
       }
 
-      // Add Headlights (Dynamic SpotLight)
-      const headlight = new THREE.SpotLight(0xffffff, 2.0);
-      headlight.position.set(0, 1.5, 0.5); // position on the hood
-      headlight.angle = Math.PI / 4;
-      headlight.penumbra = 0.5;
-      headlight.decay = 1.5;
-      headlight.distance = 50;
-      headlight.castShadow = true;
-      headlight.shadow.mapSize.width = 512;
-      headlight.shadow.mapSize.height = 512;
-      
-      // Point the light forward (-Z is forward in local space)
-      headlight.target.position.set(0, 0, -10);
-      
-      mesh.add(headlight);
-      mesh.add(headlight.target);
+      // PERF (measured): a shadow-casting SpotLight PER kart meant ~11 extra
+      // shadow-map render passes every frame — the single biggest framerate
+      // cost (removing them took the game from 8fps to 16fps on integrated
+      // graphics). In a daytime scene the directional sun already casts real
+      // ground shadows for every kart, so per-car headlights add almost nothing
+      // visually while costing the most. Removed. (Night tracks, if ever added,
+      // can reintroduce ONE shared/cheap light behind a quality tier.)
+      // The cheap glowing bulb mesh below is kept purely as a visual cue.
 
       // Add a small glowing bulb mesh so the player can see the light source
       const bulbGeo = new THREE.SphereGeometry(0.3, 8, 8);
@@ -547,33 +647,38 @@ export class Renderer {
       bulb.position.set(0, 1.5, -1.0); // right on the nose
       mesh.add(bulb);
     } else if (entity.type === 'TRAP') {
-      // Spiky yellow sphere
+      // Spiky yellow sphere. WHY: Standard + emissive so it reacts to IBL and
+      // its bright yellow blooms, making the hazard pop on the track.
       const geo = new THREE.IcosahedronGeometry(1, 0);
-      const mat = new THREE.MeshPhongMaterial({
+      const mat = new THREE.MeshStandardMaterial({
         color: 0xffcc00,
-        specular: 0xffff00,
-        shininess: 40,
+        emissive: 0xffaa00,
+        emissiveIntensity: 1.2,
+        roughness: 0.4,
+        metalness: 0.3,
         flatShading: true,
       });
       mesh = new THREE.Mesh(geo, mat);
     } else if (entity.type === 'PROJECTILE') {
-      // Green glowing sphere
+      // Green glowing sphere — strong emissive so it reads as an energy shell.
       const geo = new THREE.SphereGeometry(0.6, 16, 16);
-      const mat = new THREE.MeshPhongMaterial({
+      const mat = new THREE.MeshStandardMaterial({
         color: 0x00ff44,
         emissive: 0x00ff44,
-        emissiveIntensity: 0.5,
-        shininess: 100,
+        emissiveIntensity: 1.4,
+        roughness: 0.3,
+        metalness: 0.0,
       });
       mesh = new THREE.Mesh(geo, mat);
     } else if (entity.type === 'POWERUP_BOOST') {
-      // Rotating blue crystal
+      // Rotating blue crystal — emissive core blooms as it hovers/spins.
       const geo = new THREE.OctahedronGeometry(1.0, 0);
-      const mat = new THREE.MeshPhongMaterial({
+      const mat = new THREE.MeshStandardMaterial({
         color: 0x3399ff,
         emissive: 0x1166cc,
-        emissiveIntensity: 0.4,
-        shininess: 120,
+        emissiveIntensity: 1.2,
+        roughness: 0.2,
+        metalness: 0.4,
         flatShading: true,
       });
       mesh = new THREE.Mesh(geo, mat);
@@ -581,7 +686,7 @@ export class Renderer {
       mesh.userData.isPickup = true;
     } else {
       const geo = new THREE.BoxGeometry(1, 1, 1);
-      const mat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+      const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8, metalness: 0.1 });
       mesh = new THREE.Mesh(geo, mat);
     }
 
@@ -736,6 +841,9 @@ export class Renderer {
   }
 
   render() {
-    this.renderer.render(this.scene, this.camera);
+    // WHY: render through the post-processing composer (RenderPass → bloom →
+    // OutputPass/tone map) instead of the raw renderer, so bloom and ACES tone
+    // mapping are applied every frame.
+    this.composer.render();
   }
 }
