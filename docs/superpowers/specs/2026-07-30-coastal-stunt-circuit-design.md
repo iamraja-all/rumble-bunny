@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the prototype's straight strip with one server-authoritative beach circuit that supports a reliable main route, three jumps, and one faster shortcut whose reward depends on a clean ramp landing. Existing bots and the minimap must consume that same circuit data so the playable race remains coherent.
+Replace the prototype's straight strip with one server-authoritative beach circuit that supports a reliable main route, three jumps, and one faster shortcut whose reward depends on a clean ramp landing. The player lobby is capped at eight racers; existing bots, traffic, and the minimap consume the same circuit data so the playable race remains coherent.
 
 This is one micro-system: circuit definition and directed lap progress. Road collision, off-road slowdown, new vehicle physics, new items, and art assets are out of scope.
 
@@ -60,7 +60,9 @@ No branch may bypass `harbor-merge`; no finish crossing is valid until the activ
 3. `03_Stable_Build/track.js` adopts the validated definition for ramps, item spawners, spawn positions, and renderer-facing geometry.
 4. `03_Stable_Build/race.js` delegates checkpoint selection and crossing checks to the circuit helper, retaining countdown, timing, finish ordering, and ledger writes.
 5. `03_Stable_Build/bots.js` aims the existing controller at the current circuit gate center. It does not add decision-making or racing strategy.
-6. `04_Render_Engine/src/renderer.js` builds the road and route markers from circuit data, and `04_Render_Engine/src/minimap.js` draws its path and gates from that data. Neither computes lap progress.
+6. `03_Stable_Build/traffic.js` owns the three server-created obstacle karts. It reuses the circuit gate helpers at low throttle but never joins `Lobby` or `RaceManager`.
+7. `03_Stable_Build/lobby.js` has exactly eight player slots, sourced from the circuit start grid.
+8. `04_Render_Engine/src/renderer.js` builds the road and route markers from circuit data, and `04_Render_Engine/src/minimap.js` draws its path and gates from that data. Neither computes lap progress.
 
 Malformed circuit data fails fast at server startup: duplicate IDs, an empty required route, a route branch that does not merge, or a gate with non-positive width is rejected with a descriptive error. This prevents a partially valid track from silently producing impossible races.
 
@@ -75,8 +77,8 @@ The isolation test must prove:
 5. A finish crossing before all required stages does not increment the lap.
 6. Repeated positions inside one gate advance at most once.
 
-The stable-build regression test must preserve existing countdown, finish order, total-lap, and ledger-modifier behavior while using the circuit helper. A bot regression test confirms that the controller selects the current gate center instead of a hard-coded Z coordinate. A manual renderer and minimap check confirms that the visible road, jump markers, shortcut entrance, landing, start grid, and 2D circuit path align with the definition.
+The stable-build regression test must preserve the eight-player lobby cap, existing countdown, finish order, total-lap, and ledger-modifier behavior while using the circuit helper. A bot regression test confirms that the controller selects the current gate center instead of a hard-coded Z coordinate. A traffic regression test confirms that three obstacle karts exist outside the lobby and are not registered with the race manager. A manual renderer and minimap check confirms that the visible road, jump markers, shortcut entrance, landing, start grid, and 2D circuit path align with the definition.
 
 ## Scope Boundaries
 
-The circuit does not add a new dependency, change the ledger field format, or alter vehicle balance. It is compatible with the existing fixed 60 fps server loop. It changes the existing bot target from a hard-coded straight-line coordinate to the next circuit gate, but does not add bot pathfinding or strategy. Any future wall collision, respawn, shortcuts with collectibles, or terrain art will be separate micro-systems.
+The circuit does not add a new dependency, change the ledger field format, or alter vehicle balance. It is compatible with the existing fixed 60 fps server loop. It changes the existing bot and traffic target from a hard-coded straight-line coordinate to the next circuit gate, but does not add bot pathfinding or strategy. Any future wall collision, respawn, shortcuts with collectibles, or terrain art will be separate micro-systems.

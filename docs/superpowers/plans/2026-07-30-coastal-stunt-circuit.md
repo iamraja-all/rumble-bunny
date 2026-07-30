@@ -14,6 +14,7 @@
 - Do not add dependencies or change the pipe-delimited ledger field format.
 - Use `CIRCUIT_DEF` as the single source for XZ geometry, spawns, ramps, gates, items, road paths, bots, renderer, and minimap.
 - Keep the circuit to one main route, one faster shortcut, three main-route jumps, and no item reward on the shortcut.
+- Limit `Lobby` to exactly eight racers; server-owned traffic karts must not occupy a player slot, receive race state, or block race completion.
 - Preserve existing `RaceManager` countdown, finish-order, total-lap, timing, and ledger-modifier behavior.
 - Keep the existing performance guardrails: pixel ratio 1, one directional shadow light, and no per-kart spotlights.
 
@@ -28,8 +29,10 @@
 | `03_Stable_Build/circuit-track.js` | Promoted, tested production circuit contract. |
 | `03_Stable_Build/track.js` | Existing launch-pad and item-spawner API backed by `CIRCUIT_DEF`. |
 | `03_Stable_Build/race.js` | Race lifecycle plus authoritative circuit progress and ledger modifiers. |
-| `03_Stable_Build/lobby.js` | Eight circuit-grid spawn positions, with a safe fallback for non-racer slots. |
+| `03_Stable_Build/lobby.js` | Exactly eight circuit-grid player slots; no non-racer fallback. |
 | `03_Stable_Build/bots.js` | Existing steering controller targets the current circuit gate center. |
+| `03_Stable_Build/traffic.js` | Server-owned low-speed obstacle karts that reuse circuit progress without joining a race. |
+| `03_Stable_Build/server.js` | Keeps player and traffic collections separate while combining them only for physics, collisions, and ledger broadcast. |
 | `03_Stable_Build/test_race_circuit_v1.js` | Stable-build integration regression for circuit laps and bot target lookup. |
 | `04_Render_Engine/src/circuit-visuals.js` | Three.js meshes for road, ramps, gate markers, and start grid from `CIRCUIT_DEF`. |
 | `04_Render_Engine/src/renderer.js` | Replaces fixed straight-track environment calls with `circuit-visuals`. |
@@ -191,11 +194,14 @@ git commit -m "feat: prove circuit progress in isolation"
 - Modify: `03_Stable_Build/race.js`
 - Modify: `03_Stable_Build/lobby.js`
 - Modify: `03_Stable_Build/bots.js`
+- Create: `03_Stable_Build/traffic.js`
+- Modify: `03_Stable_Build/server.js`
 - Create: `03_Stable_Build/test_race_circuit_v1.js`
+- Create: `03_Stable_Build/test_traffic_v1.js`
 
 **Interfaces:**
 - Consumes: the Task 1 exports, vehicle `x`, `z`, and existing race lifecycle state.
-- Produces: `raceState.trackProgress`, `modifiers.route`, current gate lookup for bots, and circuit-grid spawns.
+- Produces: `raceState.trackProgress`, `modifiers.route`, current gate lookup for bots, exactly eight circuit-grid player spawns, and traffic entities outside the race.
 
 - [ ] **Step 1: Promote the exact tested module and test**
 
@@ -250,7 +256,9 @@ export function createRaceState() {
 
 Store a `previousPositions` map on `RaceManager`. Each racing tick calls `advanceCircuitProgress` with the previous and current XZ positions, copies `trackProgress.route` to `route`, increments `nextCheckpoint` only when the helper reports a crossed gate, and performs the existing lap-time/finish-order block only when `lapCompleted` is true. Write `modifiers.route` along with the existing lap, checkpoint, finish, race-time, and best-lap modifiers.
 
-In `track.js`, set `TRACK_DEF.launchPads` and `TRACK_DEF.itemSpawners` from `CIRCUIT_DEF`; preserve `getLaunchPadAt` and `updateSpawners` signatures. In `lobby.js`, use `CIRCUIT_DEF.spawnPositions[slotIndex]` and retain a modulo fallback for slots 8-15 used by non-race traffic. In `bots.js`, replace the `CHECKPOINTS` import with an exported `getBotTarget(raceState)` helper that returns `getCurrentGate(raceState.trackProgress).center`, set the target XZ from that helper, and preserve existing steering/drift behavior.
+In `track.js`, set `TRACK_DEF.launchPads` and `TRACK_DEF.itemSpawners` from `CIRCUIT_DEF`; preserve `getLaunchPadAt` and `updateSpawners` signatures. In `lobby.js`, set `MAX_PLAYERS` to `CIRCUIT_DEF.spawnPositions.length` and use the matching start position directly; slots beyond P7 return `null`. In `bots.js`, replace the `CHECKPOINTS` import with an exported `getBotTarget(raceState)` helper that returns `getCurrentGate(raceState.trackProgress).center`, set the target XZ from that helper, and preserve existing steering/drift behavior.
+
+Create `traffic.js` with `createTrafficVehicles(baseStats)` and `updateTrafficVehicle(vehicle, progress)`. The factory returns exactly three `{ vehicle, progress, bot }` records with IDs `T1`, `T2`, and `T3`, low throttle `0.3`, and offsets on the main road. The updater calls the existing `BotController` toward `getCurrentGate(progress)`, advances its private circuit progress after movement, and never writes a race modifier. In `server.js`, replace `lobby.join('traffic-*')` with this collection; include traffic only when applying collisions and serializing the ledger.
 
 - [ ] **Step 4: Cover branch and bot regression behavior**
 
@@ -284,12 +292,23 @@ if (shortcutState.trackProgress.nextGateIds[0] !== 'shortcut-landing') {
 if (shortcutState.lap !== 0) throw new Error('T5: incomplete shortcut does not score a lap');
 ```
 
-Add a duplicate-position assertion: calling `RaceManager.update` twice at the same gate position cannot increment `nextCheckpoint` twice. Also assert an early finish leaves `lap` at zero. Run both `node 03_Stable_Build/test_circuit-track_v1.js` and `node 03_Stable_Build/test_race_circuit_v1.js`.
+Add a duplicate-position assertion: calling `RaceManager.update` twice at the same gate position cannot increment `nextCheckpoint` twice. Also assert an early finish leaves `lap` at zero. Keep the existing `test_lobby_v1.js` assertion that a ninth player is rejected, and add `test_traffic_v1.js` with:
+
+```js
+import { createTrafficVehicles } from './traffic.js';
+
+const traffic = createTrafficVehicles({ max_speed: 40, acceleration: 5, handling: 1.5, stunt_rate: 2, weight: 1000, boost_mult: 1.5 });
+if (traffic.length !== 3) throw new Error('T6: exactly three traffic karts are created');
+if (traffic.some(({ vehicle }) => !['T1', 'T2', 'T3'].includes(vehicle.id))) throw new Error('T7: traffic IDs do not consume player slots');
+if (traffic.some(({ vehicle }) => vehicle.modifiers.lap !== undefined)) throw new Error('T8: traffic has no race modifier');
+```
+
+Run `node 03_Stable_Build/test_lobby_v1.js`, `node 03_Stable_Build/test_circuit-track_v1.js`, `node 03_Stable_Build/test_race_circuit_v1.js`, and `node 03_Stable_Build/test_traffic_v1.js`.
 
 - [ ] **Step 5: Commit stable headless integration**
 
 ```bash
-git add 03_Stable_Build/circuit-track.js 03_Stable_Build/test_circuit-track_v1.js 03_Stable_Build/track.js 03_Stable_Build/race.js 03_Stable_Build/lobby.js 03_Stable_Build/bots.js 03_Stable_Build/test_race_circuit_v1.js
+git add 03_Stable_Build/circuit-track.js 03_Stable_Build/test_circuit-track_v1.js 03_Stable_Build/track.js 03_Stable_Build/race.js 03_Stable_Build/lobby.js 03_Stable_Build/bots.js 03_Stable_Build/traffic.js 03_Stable_Build/server.js 03_Stable_Build/test_race_circuit_v1.js 03_Stable_Build/test_traffic_v1.js
 git commit -m "feat: integrate coastal circuit race flow"
 ```
 
@@ -392,6 +411,7 @@ node 03_Stable_Build/test_lobby_v1.js
 node 03_Stable_Build/test_ledger_v1.js
 node 03_Stable_Build/test_circuit-track_v1.js
 node 03_Stable_Build/test_race_circuit_v1.js
+node 03_Stable_Build/test_traffic_v1.js
 ```
 
 Expected: each script exits with status 0. Preserve the exact failing command and output in the session record if any command fails.
