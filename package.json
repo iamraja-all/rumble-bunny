@@ -1,6 +1,7 @@
 {
   "name": "rumble-bunny",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
     "dev:server": "node 03_Stable_Build/server.js",
     "dev:client": "cd 04_Render_Engine && npx vite",
