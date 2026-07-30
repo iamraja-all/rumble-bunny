@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the prototype's straight strip with one server-authoritative beach circuit that supports a reliable main route, three jumps, and one faster shortcut whose reward depends on a clean ramp landing.
+Replace the prototype's straight strip with one server-authoritative beach circuit that supports a reliable main route, three jumps, and one faster shortcut whose reward depends on a clean ramp landing. Existing bots and the minimap must consume that same circuit data so the playable race remains coherent.
 
 This is one micro-system: circuit definition and directed lap progress. Road collision, off-road slowdown, new vehicle physics, new items, and art assets are out of scope.
 
@@ -30,7 +30,7 @@ Pass/fail: a headless test drives a vehicle through either legal route and then 
 | Main loop stages | `coast-west (-55, 5)`, `northwest (-65, -65)`, `north (-20, -105)`, `east-bend (60, -60)`, `harbor-merge (60, 20)`, `return (20, 55)` |
 | Shortcut stages | `shortcut-entry (-10, -82)`, `shortcut-landing (32, -28)`, then `harbor-merge (60, 20)` |
 | Main-route jumps | `north-jump (-35, -98)`, `east-jump (52, -48)`, `return-jump (35, 44)` |
-| Shortcut jump | Uses `shortcut-entry` as the ramp zone and `shortcut-landing` as the required landing gate |
+| Shortcut jump | `shortcut-ramp (-10, -82)` is the ramp zone; `shortcut-entry` is its progress gate and `shortcut-landing` is the required landing gate |
 | Road width | 28 m main route; 16 m shortcut |
 | Spawn grid | Eight positions behind the finish gate, with four columns and two rows, centered on the start heading |
 | Items | Existing item spawners move onto the main loop approach and one normal-route bend. The shortcut has no item reward in this slice. |
@@ -59,7 +59,8 @@ No branch may bypass `harbor-merge`; no finish crossing is valid until the activ
 2. Its terminal test supplies synthetic previous/current positions and proves legal and illegal progress paths without WebSocket or rendering dependencies.
 3. `03_Stable_Build/track.js` adopts the validated definition for ramps, item spawners, spawn positions, and renderer-facing geometry.
 4. `03_Stable_Build/race.js` delegates checkpoint selection and crossing checks to the circuit helper, retaining countdown, timing, finish ordering, and ledger writes.
-5. `04_Render_Engine/src/renderer.js` builds the road and route markers from circuit data. It must not compute lap progress.
+5. `03_Stable_Build/bots.js` aims the existing controller at the current circuit gate center. It does not add decision-making or racing strategy.
+6. `04_Render_Engine/src/renderer.js` builds the road and route markers from circuit data, and `04_Render_Engine/src/minimap.js` draws its path and gates from that data. Neither computes lap progress.
 
 Malformed circuit data fails fast at server startup: duplicate IDs, an empty required route, a route branch that does not merge, or a gate with non-positive width is rejected with a descriptive error. This prevents a partially valid track from silently producing impossible races.
 
@@ -67,15 +68,15 @@ Malformed circuit data fails fast at server startup: duplicate IDs, an empty req
 
 The isolation test must prove:
 
-1. The definition contains eight spawns, three main-route jump zones, one shortcut ramp/landing pair, and one merge gate.
+1. The definition contains eight spawns, three main-route jump zones, one separate shortcut ramp/landing pair, and one merge gate.
 2. A complete main-route traversal records one lap and resets the branch selector.
 3. A complete shortcut traversal records one lap only after the shortcut landing gate.
 4. Reverse gate crossings do not advance progress.
 5. A finish crossing before all required stages does not increment the lap.
 6. Repeated positions inside one gate advance at most once.
 
-The stable-build regression test must preserve existing countdown, finish order, total-lap, and ledger-modifier behavior while using the circuit helper. A manual renderer check confirms that the visible road, jump markers, shortcut entrance, landing, and start grid align with the definition.
+The stable-build regression test must preserve existing countdown, finish order, total-lap, and ledger-modifier behavior while using the circuit helper. A bot regression test confirms that the controller selects the current gate center instead of a hard-coded Z coordinate. A manual renderer and minimap check confirms that the visible road, jump markers, shortcut entrance, landing, start grid, and 2D circuit path align with the definition.
 
 ## Scope Boundaries
 
-The circuit does not add a new dependency, change the ledger field format, or alter vehicle balance. It is compatible with the existing fixed 60 fps server loop. Any future wall collision, respawn, bot pathing, shortcuts with collectibles, or terrain art will be separate micro-systems.
+The circuit does not add a new dependency, change the ledger field format, or alter vehicle balance. It is compatible with the existing fixed 60 fps server loop. It changes the existing bot target from a hard-coded straight-line coordinate to the next circuit gate, but does not add bot pathfinding or strategy. Any future wall collision, respawn, shortcuts with collectibles, or terrain art will be separate micro-systems.
