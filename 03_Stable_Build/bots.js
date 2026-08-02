@@ -75,6 +75,23 @@ export class BotController {
       return input;
     }
 
+    // WHY BOTS FLY HANDS-OFF (2026-08-02):
+    // airborne steer now drives ROLL, not yaw, to match Rumble Racing — and
+    // checkLanding tolerances rotZ, so touching down mid-roll CRASHES. Bots steer
+    // proportionally every frame toward their next gate and had no airborne guard,
+    // so the moment that change landed they barrel-rolled off every ramp and ate
+    // the crash on touchdown. Measured over the same seeded 180-second simulation:
+    // finishers fell 5 -> 1 and gates cleared 189 -> 123. Steering in the air also
+    // buys them nothing now, because roll does not change heading; the gate they
+    // are chasing is reached by where they were pointing at takeoff.
+    // Returning neutral input keeps them level so they land clean. A bot that
+    // deliberately rolls and squares up before touchdown would score stunt boosts
+    // and is a genuine future upgrade — but it is a racing-line behaviour, not a
+    // regression fix, and it needs its own test.
+    if (vehicle.state === 'AIRBORNE') {
+      return input;
+    }
+
     const target = getBotTarget(raceState);
     const dx = target.x + this.targetOffset - vehicle.x;
     const dz = target.z - vehicle.z;

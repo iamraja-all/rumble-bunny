@@ -257,12 +257,22 @@ function runTests() {
     assert(v.modifiers.crash_timer === 0, 'T11: Crash timer is zero after recovery');
   })();
 
-  // ── Test 12: Steering while airborne spins the vehicle (stunt) ──────
+  // ── Test 12: Steering while airborne BARREL ROLLS the vehicle ───────
+  //
+  // WHY THIS TEST CHANGED AXIS (2026-08-02, player-reported: "the airborne
+  // rotation only works when i click the up or down button"):
+  // it used to assert that airborne steering moved rotY — a flat spin. That was
+  // the bug, not the contract. A flat spin is nearly invisible from a chase camera
+  // sitting directly behind the kart, it slipped past checkLanding (which
+  // tolerances rotX and rotZ only) so it was free boost at zero risk, and rotY IS
+  // the heading, so it silently re-aimed the car. The control scheme is now Rumble
+  // Racing's: up/down flips, left/right barrel rolls.
   (() => {
     let v = createVehicleState('P0', BALANCED_STATS);
     v.speed = 20;
     v = launchVehicle(v, 15);
     v = updateVehicle(v, { throttle: 0, brake: 0, steer: 0, drift: false }, DT);
+    const rollAtLaunch = v.rotZ;
     const yawAtLaunch = v.rotY;
 
     // Steer while airborne for 30 frames
@@ -270,18 +280,23 @@ function runTests() {
       v = updateVehicle(v, { throttle: 0, brake: 0, steer: 1.0, drift: false }, DT);
     }
 
-    assert(v.rotY !== yawAtLaunch, 'T12: Steering spins the vehicle while airborne');
+    assert(v.rotZ !== rollAtLaunch, 'T12: Steering rolls the vehicle while airborne');
 
-    // THE ASSERTION THAT WAS MISSING (added 2026-08-02 after a player reported it):
-    // `rotY !== yawAtLaunch` is direction-blind, so it stayed green while the
-    // airborne branch used `+=` against the grounded branch's `-=`. Steering
-    // inverted the instant a kart left the ground — press right in the air, spin
-    // left. A control that reverses mid-jump is unplayable, and no test noticed.
-    assert(v.rotY < yawAtLaunch,
-      `T12b: airborne steer RIGHT decreases yaw, same as on the ground (got ${(v.rotY - yawAtLaunch).toFixed(3)})`);
+    // The SIGN, derived rather than observed. renderer.js:603 feeds the state to
+    // three.js as `mesh.rotation.set(rotX, rotY, rotZ, 'YXZ')`, a right-handed
+    // Euler, so a positive rotZ rotates the kart's right-hand point (+X, which at
+    // rotY = 0 is the driver's right per spec.md section 1) toward +Y — it LIFTS
+    // the right side, i.e. banks LEFT. Steering right must drop the right side, so
+    // rotZ must DECREASE. Same convention as the grounded branch: right subtracts.
+    // A direction-blind `!==` check is what let an inverted airborne steer ship to
+    // a player once already, so the direction is asserted every time.
+    assert(v.rotZ < rollAtLaunch,
+      `T12b: airborne steer RIGHT rolls RIGHT — rotZ decreases (got ${(v.rotZ - rollAtLaunch).toFixed(3)})`);
 
-    // And the invariant behind it, stated directly: the same stick input must turn
-    // the car the same way whether or not it is touching the track.
+    // The invariant behind it, restated for the new axis: the same stick input must
+    // take the car in the same direction whether or not it is touching the track —
+    // right is right, whether that is expressed as yaw on the ground or roll in
+    // the air. In this right-handed world both are a decrease.
     let ground = createVehicleState('P1', BALANCED_STATS);
     ground.speed = 20;
     const groundYaw0 = ground.rotY;
@@ -289,9 +304,15 @@ function runTests() {
       ground = updateVehicle(ground, { throttle: 0.4, brake: 0, steer: 1.0, drift: false }, DT);
     }
     const groundDelta = ground.rotY - groundYaw0;
-    const airDelta = v.rotY - yawAtLaunch;
+    const airDelta = v.rotZ - rollAtLaunch;
     assert(Math.sign(groundDelta) === Math.sign(airDelta),
-      `T12c: grounded and airborne steering agree in direction (ground ${groundDelta.toFixed(3)}, air ${airDelta.toFixed(3)})`);
+      `T12c: grounded steer and airborne roll agree in direction (ground yaw ${groundDelta.toFixed(3)}, air roll ${airDelta.toFixed(3)})`);
+
+    // And the heading is now untouched by air steering — exactly, not approximately.
+    // Nothing in the AIRBORNE path writes rotY, which is what makes the
+    // heading-preservation guarantee in T16g hold by construction.
+    assert(v.rotY === yawAtLaunch,
+      `T12d-air: airborne steering leaves the heading bit-identical (${v.rotY} === ${yawAtLaunch})`);
   })();
 
   // ── Test 13: No throttle while airborne ─────────────────────────────
@@ -412,6 +433,157 @@ function runTests() {
     applyCarCollisions([s1, s2]);
     assert(s1.speed === 20 && s2.speed === 20,
       'T12h: karts already moving apart do not keep trading speed');
+  })();
+
+  // ── Test 16: Rumble Racing air control — rolls score, and they cost ──
+  //
+  // WHY: spec.md section 4.1 names three stunt axes, but rotZ was never written by
+  // any code path, so barrel rolls were unreachable and deltaZ in the scoring sum
+  // was permanently 0. Now that left/right drives roll, the whole chain has to be
+  // proved end to end: the roll happens, at the right rate, in the right direction;
+  // it scores; it goes through checkLanding's tolerance window so it carries real
+  // crash risk; and it does not disturb the heading or the grounded handling.
+  (() => {
+    // The engine's air rotation rate, restated from the model rather than measured
+    // from the engine, so a stunt_rate or dt regression fails here instead of
+    // quietly re-baselining itself.
+    const rollPerFrame = BALANCED_STATS.stunt_rate * DT * 2.0;
+
+    // Frames to clear a full 2π. +1 for float headroom: a frame count that lands
+    // exactly on 2π would leave floor(deltaZ / 2π) at the mercy of rounding.
+    const FULL_ROLL_FRAMES = Math.ceil((2 * Math.PI) / rollPerFrame) + 1;
+    const HALF_ROLL_FRAMES = Math.round(FULL_ROLL_FRAMES / 2);
+
+    // ── T16a: the roll rate matches the model exactly ─────────────────
+    (() => {
+      let v = createVehicleState('P0', BALANCED_STATS);
+      v = launchVehicle(v, 15);
+      const roll0 = v.rotZ;
+      for (let i = 0; i < 30; i++) {
+        v = updateVehicle(v, { throttle: 0, brake: 0, steer: 1.0, drift: false }, DT);
+      }
+      const expected = -30 * rollPerFrame; // negative: steer right banks right
+      assert(approxEqual(v.rotZ - roll0, expected),
+        `T16a: 30 frames of full-lock right rolls exactly ${expected.toFixed(4)} rad (got ${(v.rotZ - roll0).toFixed(4)})`);
+    })();
+
+    // ── T16b: steering LEFT rolls the other way, by the same amount ───
+    (() => {
+      let v = createVehicleState('P0', BALANCED_STATS);
+      v = launchVehicle(v, 15);
+      for (let i = 0; i < 30; i++) {
+        v = updateVehicle(v, { throttle: 0, brake: 0, steer: -1.0, drift: false }, DT);
+      }
+      assert(v.rotZ > 0,
+        `T16b: airborne steer LEFT rolls LEFT — rotZ increases (got ${v.rotZ.toFixed(4)})`);
+      assert(approxEqual(v.rotZ, 30 * rollPerFrame),
+        `T16b2: left roll is the mirror of the right roll in magnitude (got ${v.rotZ.toFixed(4)})`);
+    })();
+
+    // ── T16c: up/down still pitches, sign unchanged, and only pitches ─
+    (() => {
+      let up = createVehicleState('P0', BALANCED_STATS);
+      up = launchVehicle(up, 15);
+      for (let i = 0; i < 30; i++) {
+        up = updateVehicle(up, { throttle: 1.0, brake: 0, steer: 0, drift: false }, DT);
+      }
+      assert(up.rotX > 0,
+        `T16c: airborne throttle still pitches forward — rotX increases (got ${up.rotX.toFixed(4)})`);
+      assert(approxEqual(up.rotX, 30 * rollPerFrame),
+        `T16c2: pitch rate is unchanged by this work (got ${up.rotX.toFixed(4)})`);
+      assert(up.rotZ === 0, 'T16c3: pitch input induces no roll');
+
+      let down = createVehicleState('P1', BALANCED_STATS);
+      down = launchVehicle(down, 15);
+      for (let i = 0; i < 30; i++) {
+        down = updateVehicle(down, { throttle: 0, brake: 1.0, steer: 0, drift: false }, DT);
+      }
+      assert(down.rotX < 0,
+        `T16c4: airborne brake pitches backward — rotX decreases (got ${down.rotX.toFixed(4)})`);
+    })();
+
+    // ── T16d/e: a completed 360 roll scores, and lands cleanly ────────
+    // WHY the takeoff heading is deliberately non-zero: rotY = 0 would let a
+    // heading bug hide behind the default. 0.9 rad is an arbitrary awkward angle.
+    (() => {
+      let v = createVehicleState('P0', BALANCED_STATS);
+      v.speed = 20;
+      v.rotY = 0.9;
+      v = launchVehicle(v, 15);
+      const headingAtTakeoff = v.rotY;
+
+      // Roll for exactly one revolution, then hold neutral so the kart coasts back
+      // to level before it touches down.
+      let stuntsInFlight = 0;
+      let frames = 0;
+      while (v.state === 'AIRBORNE' && frames < 600) {
+        const steer = frames < FULL_ROLL_FRAMES ? 1.0 : 0;
+        v = updateVehicle(v, { throttle: 0, brake: 0, steer, drift: false }, DT);
+        if (v.state === 'AIRBORNE') {
+          // Capture before landing: checkLanding zeroes the counter as it pays out.
+          stuntsInFlight = Math.max(stuntsInFlight, v.modifiers.stunts);
+        }
+        frames++;
+      }
+
+      assert(frames < 600, 'T16d0: the kart actually landed within the frame budget');
+      assert(stuntsInFlight === 1,
+        `T16d: a full 360 barrel roll scores exactly one stunt (got ${stuntsInFlight})`);
+      assert(v.state === 'BOOSTING',
+        `T16e: completing the roll before touchdown lands clean and pays a boost (got ${v.state})`);
+      assert(v.modifiers.boost_timer > 0,
+        `T16e2: boost timer is set from the roll (got ${v.modifiers.boost_timer.toFixed(2)})`);
+
+      // ── T16g: heading survives the flight ───────────────────────────
+      // Nothing in the AIRBORNE path writes rotY any more, so this is exact
+      // equality, not a tolerance. When the old code spun yaw in the air the kart
+      // came down pointing somewhere the player never aimed it.
+      assert(v.rotY === headingAtTakeoff,
+        `T16g: heading at landing equals heading at takeoff (${v.rotY} === ${headingAtTakeoff})`);
+    })();
+
+    // ── T16f: landing mid-roll CRASHES ────────────────────────────────
+    // This is the whole point of moving the axis: roll feeds checkLanding, so a
+    // barrel roll is a risk/reward decision instead of free money. Half a roll is
+    // ~π of bank, far outside the ±π/6 tolerance window.
+    (() => {
+      let v = createVehicleState('P0', BALANCED_STATS);
+      v.speed = 20;
+      v = launchVehicle(v, 15);
+
+      let frames = 0;
+      while (v.state === 'AIRBORNE' && frames < 600) {
+        const steer = frames < HALF_ROLL_FRAMES ? 1.0 : 0;
+        v = updateVehicle(v, { throttle: 0, brake: 0, steer, drift: false }, DT);
+        frames++;
+      }
+
+      assert(v.state === 'CRASHED',
+        `T16f: landing mid-roll, outside the tolerance window, CRASHES (got ${v.state})`);
+      assert(v.modifiers.crash_timer > 0, 'T16f2: the mid-roll crash sets a recovery timer');
+      assert(v.modifiers.boost_timer === 0, 'T16f3: a crashed roll pays no boost');
+    })();
+
+    // ── T16h: grounded steering is completely unaffected ──────────────
+    // Regression guard. The grounded branch was fixed only recently and must not
+    // be collateral damage from the air-control change.
+    (() => {
+      let g = createVehicleState('P0', BALANCED_STATS);
+      for (let i = 0; i < 60; i++) {
+        g = updateVehicle(g, { throttle: 1.0, brake: 0, steer: 0, drift: false }, DT);
+      }
+      const yaw0 = g.rotY;
+      for (let i = 0; i < 60; i++) {
+        g = updateVehicle(g, { throttle: 1.0, brake: 0, steer: 1.0, drift: false }, DT);
+      }
+      assert(g.rotY < yaw0,
+        `T16h: grounded steer RIGHT still decreases yaw (got ${(g.rotY - yaw0).toFixed(4)})`);
+      assert(g.rotZ === 0,
+        `T16h2: grounded steering never induces roll — roll is an air-only control (got ${g.rotZ})`);
+      assert(g.rotX === 0, 'T16h3: grounded steering never induces pitch');
+      assert(g.state !== 'AIRBORNE' && g.state !== 'CRASHED',
+        `T16h4: a grounded kart steering at speed stays grounded and intact (got ${g.state})`);
+    })();
   })();
 
   // ── RESULTS ─────────────────────────────────────────────────────────

@@ -15,6 +15,9 @@
  * Coordinate System: Right-Handed, Y-Up.
  *   X = right, Y = up (gravity = -Y), Z = toward camera.
  *   Yaw (rotY) = steering rotation around Y axis.
+ *   Pitch (rotX) = flips. Roll (rotZ) = barrel rolls; positive rotZ is a
+ *     right-handed rotation about +Z, which LIFTS the right-hand side of the
+ *     kart, i.e. banks it LEFT. Banking right is negative rotZ.
  *   Forward vector = (-sin(rotY), 0, -cos(rotY)) in this system.
  *
  * Big-O Complexity: O(1) per call — fixed number of arithmetic operations
@@ -208,29 +211,62 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
     // would corrupt that difference and miscount flips.
     v.rotY = normalizeAngle(v.rotY);
   } else if (v.state === 'AIRBORNE') {
-    // ── STUNT DETECTION (AIRBORNE ONLY) ─────────────────────────────
-    // In air, steering input translates to stunt rotation (flips/spins)
-    const stuntMultiplier = s.stunt_rate * dt * 2.0; // Base turning speed in air
-    
-    // throttle/brake controls pitch (flips), steer controls yaw (flat spins)
+    // ── STUNT ROTATION (AIRBORNE ONLY) ──────────────────────────────
+    // The air control scheme is Rumble Racing's (PS2, 2001), which is the feel the
+    // player asked for: UP/DOWN = front and back FLIPS (pitch), LEFT/RIGHT = BARREL
+    // ROLLS (roll). Both axes produce a large, unmistakable rotation.
+    const stuntMultiplier = s.stunt_rate * dt * 2.0; // Base rotation speed in air
+
+    // throttle/brake controls pitch (flips) — unchanged, and correct.
     v.rotX += (throttle - brake) * stuntMultiplier;
 
-    // WHY THIS IS `-=` AND NOT `+=` (fixed 2026-08-02, player-reported):
-    // the grounded branch above does `v.rotY -= steerRate` because in a
-    // Right-Handed Y-Up world a positive rotY is counter-clockwise seen from above,
-    // i.e. a LEFT turn — so steering right has to SUBTRACT. This branch added
-    // instead, so the moment a kart left the ground the steering silently inverted:
-    // press right in the air and the car span left. Reported from play, not caught
-    // by a test, because T12 only asserted that rotY changed at all — a
-    // direction-blind assertion, the same weakness that produced the earlier false
-    // passes. The stunt counter is unaffected either way: it measures
-    // |rotY - takeoff_rotY|, so the sign never mattered to scoring — only to the
-    // player's hands.
-    v.rotY -= steer * stuntMultiplier;
+    // WHY LEFT/RIGHT NOW DRIVES ROLL (rotZ) AND NOT YAW (rotY)
+    // (2026-08-02, player-reported: "the airborne rotation only works when i click
+    // the up or down button"):
+    // this branch used to spin the kart flat about its own vertical axis. A flat
+    // yaw spin is almost invisible from a chase camera parked directly behind the
+    // kart — the silhouette barely changes — so left/right read to the player as
+    // doing nothing at all, while up/down flipped the car dramatically. Three
+    // further defects fell out of the same line:
+    //   1. rotZ was never written anywhere in this engine, so barrel rolls — one of
+    //      the three stunt axes spec.md section 4.1 names — were unreachable.
+    //   2. checkLanding tolerances rotX and rotZ only. A yaw spin touches neither,
+    //      so steering in the air banked stunt credit at ZERO crash risk: holding
+    //      left was a free, guaranteed boost. Roll goes through the tolerance
+    //      window, so a barrel roll is now a real risk/reward decision — land
+    //      mid-roll and you crash.
+    //   3. rotY IS the kart's heading (applyMovement derives the forward vector
+    //      from it) and nothing restored it on landing, so a mid-air spin silently
+    //      re-aimed the car. Nothing in the AIRBORNE path writes rotY any more, so
+    //      the heading at landing is exactly the heading at takeoff, by
+    //      construction rather than by a restore step.
+    //
+    // WHY THE SIGN IS `-=`, DERIVED NOT GUESSED:
+    // spec.md section 1 fixes a Right-Handed Y-Up world and renderer.js:603 applies
+    // the state as `mesh.rotation.set(rotX, rotY, rotZ, 'YXZ')`, a right-handed
+    // three.js Euler, so rotZ is a right-handed rotation about the kart's +Z axis.
+    // At rotY = 0 the forward vector is (0,0,-1) and up is +Y, so the driver's right
+    // is forward x up = (+1,0,0) — world +X, matching spec.md section 1. A positive
+    // right-handed rotation about +Z maps (x,y) -> (x cos - y sin, x sin + y cos),
+    // so the right-side point (1,0,0) goes to (cos, sin, 0): its Y RISES. Positive
+    // rotZ therefore lifts the right-hand side, which is a bank to the LEFT. The
+    // chase camera sits at +Z behind the kart looking along -Z with up +Y
+    // (renderer.js:716), so its screen-right is world +X and the driver's right is
+    // the player's right — no flip on the way to the eye. Steering right (steer=+1)
+    // must drop the right-hand side, which is negative rotZ. Hence `-=`.
+    // This lands on the same sign convention as the grounded branch above for the
+    // same underlying reason: in a right-handed world, "go right" subtracts.
+    v.rotZ -= steer * stuntMultiplier;
 
     // Check for completed 360-degree rotations (2π radians)
     // We compare current absolute rotation against the rotation when we took off
     const deltaX = Math.abs(v.rotX - v.modifiers.takeoff_rotX);
+    // WHY deltaY STAYS despite being provably 0 for any ordinary flight:
+    // spec.md section 4.1 names yaw as one of the three scoring axes, and the cost
+    // is one subtraction per tick (still O(1), R07). Keeping it means an external
+    // yaw source — a shell hit or a spin trap applied mid-air — scores as a stunt
+    // without this arithmetic having to be rediscovered. It is also the reason the
+    // heading-preservation test can be written as an engine invariant.
     const deltaY = Math.abs(v.rotY - v.modifiers.takeoff_rotY);
     const deltaZ = Math.abs(v.rotZ - v.modifiers.takeoff_rotZ);
 
