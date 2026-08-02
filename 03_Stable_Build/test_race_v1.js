@@ -38,7 +38,18 @@ function assert(cond, label) {
 }
 
 function makeVehicle(pid) {
-  return { id: pid, x: 0, y: 0, z: 0, modifiers: {} };
+  // Mirrors the fields of createVehicleState that race.js is allowed to touch. The
+  // heading, speed and state fields are here because the out-of-bounds respawn
+  // writes all of them; a stub that omitted them would let a typo in that path
+  // silently create properties instead of failing.
+  return {
+    id: pid,
+    x: 0, y: 0, z: 0,
+    rotX: 0, rotY: 0, rotZ: 0,
+    speed: 0, vy: 0,
+    state: 'NORMAL',
+    modifiers: {},
+  };
 }
 
 function makeLobby(pids) {
@@ -218,6 +229,183 @@ console.log('--- RaceManager ---\n');
   assert(race.finishOrder.every(f => !String(f.clientId).startsWith('traffic')),
     'T10a: no traffic entity appears in the finish order');
   assert(race.raceStates.size === 1, 'T10b: only registered players hold race state');
+})();
+
+// ── T11-T18: THE OUT-OF-BOUNDS BUG. You could drive off the world. ──────────
+//
+// Found by driving, not by a test: hold the throttle off the racing line and the
+// kart leaves the island and keeps going over open sea at y = 0 forever. No wall,
+// no fall, no respawn, no timer. race.js now watches the playfield boundary that
+// CIRCUIT_DEF owns and puts a lost kart back at its last cleared gate.
+//
+// (0, 400) is the "out at sea" point used throughout: 425 m from the playfield
+// centre (0, -25) against a 155 m radius, and — checked by hand against
+// crossesDirectedGate — neither the trip out nor the trip back crosses any gate,
+// so these tests measure the boundary and nothing else.
+const AT_SEA = { x: 0, z: 400 };
+
+/** Run `seconds` of simulated time. The mock vehicles do not move by themselves. */
+function tick(race, lobby, seconds) {
+  const steps = Math.round(seconds * 60);
+  for (let i = 0; i < steps; i++) race.update(DT, lobby);
+}
+
+function place(lobby, clientId, x, z) {
+  const v = lobby.players.get(clientId);
+  v.x = x;
+  v.z = z;
+  return v;
+}
+
+// ── T11: a kart inside the bounds is never respawned ────────────────────────
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  // Deliberately far off the racing line but still on the island: 140 m from the
+  // playfield centre, i.e. out on the beach past every guardrail. Going wide is
+  // legal here and must cost nothing.
+  const v = place(lobby, 'client-0', 0, 115);
+  tick(race, lobby, 10);
+
+  assert(v.x === 0 && v.z === 115, `T11a: a kart on the island is never respawned (got ${v.x},${v.z})`);
+  assert(v.modifiers.out_of_bounds === 0, 'T11b: no out-of-bounds warning while on the island');
+  assert(race.raceStates.get('client-0').outOfBoundsTimer === 0, 'T11c: the grace timer never starts in bounds');
+})();
+
+// ── T12: outside the bounds, but the grace period has not elapsed ───────────
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  const v = place(lobby, 'client-0', AT_SEA.x, AT_SEA.z);
+  tick(race, lobby, 2.4); // production grace is 2.5s
+
+  assert(v.x === AT_SEA.x && v.z === AT_SEA.z, `T12a: not yet respawned before the grace elapses (got ${v.x},${v.z})`);
+  assert(v.modifiers.out_of_bounds === 1, 'T12b: the out-of-bounds flag is raised immediately, before the respawn');
+})();
+
+// ── T13: the grace elapses -> respawned at the last cleared gate ────────────
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  // Clear coast-west and northwest, then drive into the sea.
+  driveLap(race, lobby, 'client-0', MAIN_CROSSES.slice(0, 2));
+  const v = place(lobby, 'client-0', AT_SEA.x, AT_SEA.z);
+  tick(race, lobby, 2.6);
+
+  // northwest gate centre, from CIRCUIT_DEF.
+  assert(v.x === -65 && v.z === -65, `T13a: respawned at the last cleared gate (got ${v.x},${v.z})`);
+  assert(v.y === 0, 'T13b: respawned onto the flat ground plane');
+  assert(v.modifiers.out_of_bounds === 0, 'T13c: the warning clears on respawn');
+  assert(race.raceStates.get('client-0').outOfBoundsTimer === 0, 'T13d: the grace timer is reset by the respawn');
+})();
+
+// ── T14: THE HEADING. It must point DOWN the track, not backwards. ──────────
+//
+// Direction-blind assertions have produced three bugs in this codebase, including
+// an inverted airborne steer that shipped because T12 in the physics suite only
+// checked that rotY changed. So this asserts the literal yaw AND rebuilds the
+// forward vector from it and compares that against the gate normal — an inverted
+// respawn would give yaw -3.0001 and a forward vector of (+0.141, +0.990), and
+// both halves of this test would fail.
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  driveLap(race, lobby, 'client-0', MAIN_CROSSES.slice(0, 2));
+  const v = place(lobby, 'client-0', AT_SEA.x, AT_SEA.z);
+  tick(race, lobby, 2.6);
+
+  // northwest gate normal is (-0.141, -0.99); atan2(-nx, -nz) = 0.1414727864921576.
+  assert(Math.abs(v.rotY - 0.1414727864921576) < 1e-9, `T14a: respawn yaw is the gate normal's yaw (got ${v.rotY})`);
+
+  // vehicle-physics.js:18 — forward = (-sin(rotY), -cos(rotY)).
+  const fwdX = -Math.sin(v.rotY);
+  const fwdZ = -Math.cos(v.rotY);
+  assert(Math.abs(fwdX - (-0.141)) < 1e-3 && Math.abs(fwdZ - (-0.99)) < 1e-3,
+    `T14b: forward vector equals the gate normal (got ${fwdX.toFixed(4)},${fwdZ.toFixed(4)} want -0.141,-0.99)`);
+  assert(fwdX * -0.141 + fwdZ * -0.99 > 0.99, 'T14c: facing along the gate, not through it backwards');
+})();
+
+// ── T15: a respawn neither gifts nor steals progress ────────────────────────
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  driveLap(race, lobby, 'client-0');                       // one full lap
+  driveLap(race, lobby, 'client-0', MAIN_CROSSES.slice(0, 2)); // two gates into lap 2
+  const rs = race.raceStates.get('client-0');
+  const lapBefore = rs.lap;
+  const clearedBefore = rs.trackProgress.clearedGateCount;
+  const nextBefore = rs.trackProgress.nextGateIds[0];
+
+  place(lobby, 'client-0', AT_SEA.x, AT_SEA.z);
+  tick(race, lobby, 2.6);
+
+  assert(lapBefore === 1 && rs.lap === 1, `T15a: lap count unchanged across a respawn (${lapBefore} -> ${rs.lap})`);
+  assert(clearedBefore === 2 && rs.trackProgress.clearedGateCount === 2,
+    `T15b: cleared-gate count unchanged (${clearedBefore} -> ${rs.trackProgress.clearedGateCount})`);
+  assert(rs.trackProgress.nextGateIds[0] === nextBefore, `T15c: still owes the same next gate (${rs.trackProgress.nextGateIds[0]})`);
+
+  // The teleport must also be invisible to the gate-crossing test: without resetting
+  // previousPositions, next tick would sweep a segment from the open sea across the
+  // circuit and could credit gates the kart never drove through.
+  tick(race, lobby, 1);
+  assert(rs.trackProgress.clearedGateCount === 2, 'T15d: the respawn teleport does not credit a gate crossing');
+})();
+
+// ── T16: leave and come back inside the grace -> no respawn ─────────────────
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  const v = place(lobby, 'client-0', AT_SEA.x, AT_SEA.z);
+  tick(race, lobby, 1.5);
+  assert(v.modifiers.out_of_bounds === 1, 'T16a: flagged while it is out there');
+
+  place(lobby, 'client-0', 10, 10); // back on the island
+  tick(race, lobby, 1.5);           // 3.0s total, well past the 2.5s grace
+
+  assert(v.x === 10 && v.z === 10, `T16b: a kart that came back is not respawned later (got ${v.x},${v.z})`);
+  assert(race.raceStates.get('client-0').outOfBoundsTimer === 0, 'T16c: the timer resets on return, it does not decay');
+  assert(v.modifiers.out_of_bounds === 0, 'T16d: the warning clears the moment it is back in bounds');
+})();
+
+// ── T17/T18: what the kart looks like after a lap-one respawn ───────────────
+(() => {
+  const lobby = makeLobby(['P0']);
+  const race = new RaceManager();
+  race.registerPlayer('client-0');
+  startRacing(race, lobby);
+
+  const v = place(lobby, 'client-0', AT_SEA.x, AT_SEA.z);
+  v.speed = 38;
+  v.state = 'BOOSTING';
+  v.modifiers.boost_timer = 2.0;
+  v.modifiers.stunts = 3;
+  tick(race, lobby, 2.6);
+
+  assert(v.speed === 0, `T17a: speed is zeroed on respawn (got ${v.speed})`);
+  assert(v.state === 'NORMAL', `T17b: state returns to NORMAL (got ${v.state})`);
+  assert(v.modifiers.boost_timer === 0 && v.modifiers.stunts === 0, 'T17c: boost and stunt modifiers are cleared');
+
+  // No gate cleared yet, so the only place it has ever legally been is its grid
+  // slot — P0 -> CIRCUIT_DEF.spawnPositions[0], which is (5, 0, 34).
+  assert(v.x === 5 && v.z === 34, `T18: with no gates cleared it returns to its grid slot (got ${v.x},${v.z})`);
 })();
 
 console.log(`\n--- ${passed} passed, ${failed} failed ---`);

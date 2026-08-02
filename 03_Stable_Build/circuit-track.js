@@ -20,6 +20,30 @@ const SHORTCUT_ROUTE = [
 ];
 
 export const CIRCUIT_DEF = Object.freeze({
+  // ── PLAYFIELD — the authoritative extent of the world ──────────────────────
+  //
+  // WHY THIS LIVES IN THE ENGINE AND NOT IN THE RENDERER: these numbers were born
+  // in 04_Render_Engine/src/scenery.js, because the island started life as art.
+  // They stopped being art the moment gameplay needed to know where the world
+  // ends — race.js has to respawn a kart that drives past the coast, and the
+  // engine is not allowed to import client code. The alternative, copying the
+  // centre and radius into race.js, is precisely the failure this project has
+  // already shipped twice: renderer.js hard-coding CircleGeometry(240) beside an
+  // independently declared ISLAND_RADIUS = 240, and TRACK_DEF's spawn timers
+  // being shared across rooms. Two numbers that must always agree, in two files,
+  // is a seam. So the circuit owns its own footprint and scenery.js reads it.
+  //
+  // The values are unchanged from the ones scenery.js derived (see the essay at
+  // the top of that file): centre (0, -25) is the circuit's bounding-box centre,
+  // not the origin, and 155 m leaves 55.1 m of land beyond the outermost
+  // guardrail at the tightest point of the lap. `radius` is therefore both the
+  // cliff lip the player can see and the line past which there is no island —
+  // one number, one meaning.
+  playfield: Object.freeze({
+    centerX: 0,
+    centerZ: -25,
+    radius: 155,
+  }),
   road: {
     mainWidth: 28,
     shortcutWidth: 16,
@@ -139,7 +163,54 @@ export function validateCircuitDefinition(definition) {
     failValidation('exactly eight spawn positions are required');
   }
 
+  const field = definition.playfield;
+  const fieldValues = [field?.centerX, field?.centerZ, field?.radius];
+  if (fieldValues.some((value) => !Number.isFinite(value)) || !(field?.radius > 0)) {
+    failValidation('playfield needs a finite centre and a positive radius');
+  }
+
+  // WHY EVERY RESPAWN TARGET IS CHECKED AGAINST THE BOUNDARY: race.js sends an
+  // out-of-bounds kart back to a gate centre, or to its grid slot if it has
+  // cleared none. If either sat outside the playfield the kart would arrive
+  // already out of bounds and be respawned again a few seconds later, forever —
+  // a boundary that eats the player instead of saving them. Cheap to rule out
+  // here (O(G + S), once, at boot) and impossible to reason about at 60Hz.
+  const outside = [
+    ...definition.gates.map((gate) => ({ label: `gate ${gate.id}`, x: gate.center.x, z: gate.center.z })),
+    ...definition.spawnPositions.map((spawn, i) => ({ label: `spawn ${i}`, x: spawn.x, z: spawn.z })),
+  ].find(({ x, z }) => Math.hypot(x - field.centerX, z - field.centerZ) >= field.radius);
+  if (outside) {
+    failValidation(`${outside.label} lies outside the playfield boundary`);
+  }
+
   return true;
+}
+
+/**
+ * getLastClearedGate — the gate a kart most recently passed, or null on lap one
+ * before the first gate.
+ *
+ * WHY THIS LOGIC IS HERE AND NOT IN race.js: turning "cleared N gates" back into
+ * "which gate was that" needs the route tables, and the route tables live here.
+ * race.js only needs the answer.
+ *
+ * WHY MAIN IS A SAFE STAND-IN WHILE THE ROUTE IS UNSET: the two routes share their
+ * first three gates (coast-west, northwest, north) and only diverge on the fourth,
+ * which is the crossing that SETS the route. A progress record still reading UNSET
+ * has therefore cleared at most three gates, and MAIN[0..2] === SHORTCUT[0..2] —
+ * so the shared prefix answers it without guessing which way the kart would have
+ * gone.
+ *
+ * Big-O: O(G) with G = 9 gates, and it is called only when a kart is actually
+ * respawned — an event, not a per-tick cost.
+ */
+export function getLastClearedGate(progress) {
+  const cleared = progress?.clearedGateCount ?? 0;
+  if (cleared <= 0) {
+    return null;
+  }
+  const path = CIRCUIT_DEF.routes[progress.route] ?? MAIN_ROUTE;
+  return getGate(CIRCUIT_DEF, path[cleared - 1]);
 }
 
 export function createCircuitProgress() {

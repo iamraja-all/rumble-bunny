@@ -60,13 +60,24 @@ import { CIRCUIT_DEF } from '../../03_Stable_Build/circuit-track.js';
  * off a ramp into.
  */
 
-// ── ISLAND FOOTPRINT — the single source of truth ────────────────────────────
-// Exported because renderer.js builds the grass surface from it. It used to
-// hard-code CircleGeometry(240) alongside a separate ISLAND_RADIUS = 240 here,
-// which is a seam waiting to happen the first time one of the two is edited.
-const ISLAND_CENTER_X = 0;
-const ISLAND_CENTER_Z = -25;   // the circuit's bounding-box centre, not the origin
-const ISLAND_RADIUS = 155;     // 55.1 m clear of the outermost guardrail
+// ── ISLAND FOOTPRINT — read from the engine, not declared here ───────────────
+//
+// WHY THE OWNERSHIP MOVED (2026-08-02, second pass): this file used to DECLARE the
+// centre and radius, which was fine while the island was only scenery. It stopped
+// being only scenery when race.js needed to know where the world ends so it could
+// respawn a kart that drives off the coast into open sea. The engine must not
+// import client code, so if these stayed here the same two numbers would have to
+// exist in 03_Stable_Build as well — the exact seam that produced
+// CircleGeometry(240)-beside-ISLAND_RADIUS=240 the last time. CIRCUIT_DEF.playfield
+// is now the single source of truth and this file reads it. The geometry below is
+// unchanged: same centre, same radius, same island on screen.
+//
+// The rest of the constants stay local because they are purely how the island is
+// DRAWN — the engine has no opinion on beach width or how far the cliff skirt
+// hangs below the waterline.
+const ISLAND_CENTER_X = CIRCUIT_DEF.playfield.centerX;
+const ISLAND_CENTER_Z = CIRCUIT_DEF.playfield.centerZ;  // the circuit's bounding-box centre, not the origin
+const ISLAND_RADIUS = CIRCUIT_DEF.playfield.radius;     // 55.1 m clear of the outermost guardrail
 const SAND_WIDTH = 18;         // beach starts 37 m beyond the outermost guardrail
 const SEA_LEVEL = -5;
 const CLIFF_DROP = 26;         // skirt runs from y=0 down to -26, well under the sea
