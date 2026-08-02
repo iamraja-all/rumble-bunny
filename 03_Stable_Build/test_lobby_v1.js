@@ -1,5 +1,13 @@
 import { Lobby } from './lobby.js';
 import { parseLedger } from './ledger.js';
+// WHY import the circuit rather than restating its numbers: lobby.js derives both
+// MAX_PLAYERS and START_POSITIONS from CIRCUIT_DEF.spawnPositions, so a test that
+// hardcodes coordinates is asserting against a layout the engine no longer uses.
+// That is exactly how T2 and T6 went red — they still described the old straight
+// drag strip (slot 0 at x=-10, z=0) after the circuit landed. Deriving the
+// expectation from the same source of truth means a future track edit moves the
+// test with it instead of breaking it.
+import { CIRCUIT_DEF } from './circuit-track.js';
 
 /**
  * test_lobby_v1: Test runner for headless lobby and sync management.
@@ -48,7 +56,11 @@ function runTests() {
     const v = lobby.getVehicle('client-xyz');
     assert(v !== undefined, 'T2: Vehicle object created for client');
     assert(v.id === 'P0', 'T2: Vehicle id matches assigned PID');
-    assert(v.x === -10 && v.y === 0 && v.z === 0, 'T2: Vehicle positioned at slot 0 start position');
+    const slot0 = CIRCUIT_DEF.spawnPositions[0];
+    assert(
+      v.x === slot0.x && v.y === (slot0.y || 0) && v.z === slot0.z,
+      `T2: Vehicle positioned at slot 0 start position (${slot0.x}, ${slot0.y || 0}, ${slot0.z})`
+    );
   })();
 
   // ── Test 3: Same player cannot join twice ───────────────────────────
@@ -105,8 +117,9 @@ function runTests() {
     const ledgerString = lobby.getLedgerFrame();
     const lines = ledgerString.split('\n');
     assert(lines.length === 2, 'T6: Ledger string has 2 lines for 2 players');
-    assert(lines[0].startsWith('P0|VEHICLE|-10'), 'T6: Line 1 correct format');
-    assert(lines[1].startsWith('P1|VEHICLE|10'), 'T6: Line 2 correct format');
+    const [s0, s1] = CIRCUIT_DEF.spawnPositions;
+    assert(lines[0].startsWith(`P0|VEHICLE|${s0.x}`), `T6: Line 1 correct format (P0 at x=${s0.x})`);
+    assert(lines[1].startsWith(`P1|VEHICLE|${s1.x}`), `T6: Line 2 correct format (P1 at x=${s1.x})`);
   })();
 
   // ── Test 7: Ledger frame can be parsed back perfectly ───────────────

@@ -108,14 +108,45 @@ function runTests() {
       v = updateVehicle(v, { throttle: 1.0, brake: 0, steer: 0, drift: false }, DT);
     }
     const yawBeforeSteer = v.rotY;
+    const speedBeforeSteer = v.speed;
 
     // Steer right for 1 second
     for (let i = 0; i < 60; i++) {
       v = updateVehicle(v, { throttle: 1.0, brake: 0, steer: 1.0, drift: false }, DT);
     }
 
-    assert(v.rotY !== yawBeforeSteer, 'T5: Steering changes rotY');
-    assert(v.rotY > yawBeforeSteer, 'T5: Positive steer increases yaw (turns right)');
+    const yawDelta = v.rotY - yawBeforeSteer;
+
+    // WHY THIS ASSERTION WAS INVERTED (fixed 2026-08-02, ADR-0009):
+    // This test asserted `v.rotY > yawBeforeSteer` and had been failing for days.
+    // The test was wrong, not the engine. domain/spec.md section 1 fixes the world
+    // as Right-Handed, Y-Up: point your right thumb along +Y and your fingers curl
+    // counter-clockwise as seen from above, which is the direction of positive rotY
+    // — and counter-clockwise from above is a LEFT turn. So steer = +1, meaning
+    // RIGHT, must DECREASE rotY. vehicle-physics.js:191-194 does exactly that and
+    // says so. The engine is authoritative here because its reasoning is the one
+    // that matches the spec.
+    assert(yawDelta < 0, 'T5: Positive steer decreases yaw (clockwise = right turn)');
+
+    // R04 wants an exact expected output, not just a direction. The model is
+    // rotY -= handling * steer * speedFactor * dt, and speedFactor is capped at 1.0,
+    // so 60 frames of full-lock steering cannot exceed this ceiling. Asserting the
+    // bound catches a handling-stat or dt regression that a bare sign check misses.
+    const maxYawPerSecond = BALANCED_STATS.handling * 60 * DT;
+    assert(
+      Math.abs(yawDelta) <= maxYawPerSecond + 1e-9,
+      `T5: yaw change stays within the model ceiling of ${maxYawPerSecond.toFixed(3)} rad`
+    );
+    // And a lower bound derived from the model rather than guessed. Throttle is held
+    // at 1.0 with no drift, so speed rises monotonically through the steering second;
+    // every frame's speedFactor is therefore at least the one we started with, and
+    // the summed yaw cannot come in under the value computed at the starting speed.
+    const startSpeedFactor = Math.min(speedBeforeSteer / BALANCED_STATS.max_speed, 1.0);
+    const minYaw = BALANCED_STATS.handling * startSpeedFactor * 60 * DT;
+    assert(
+      Math.abs(yawDelta) >= minYaw - 1e-9,
+      `T5: yaw change is at least the ${minYaw.toFixed(3)} rad the starting speed guarantees`
+    );
   })();
 
   // ── Test 6: Drift mode increases steering rate ──────────────────────

@@ -96,18 +96,45 @@ function runTests() {
     assert(v.state === 'CRASHED', 'T4: Target vehicle crashed');
   })();
 
-  // ── Test 5: Airborne vehicles dodge items ───────────────────────────
+  // ── Test 5: State-based immunity (AIRBORNE / CRASHED) ───────────────
+  //
+  // WHY THIS TEST WAS REWRITTEN (2026-08-02, ADR-0009):
+  // It used to place the vehicle at y=5 with the trap at y=0 and assert no hit.
+  // That passed, but it proved nothing: the collision threshold is
+  // (VEHICLE_RADIUS + ITEM_RADIUS)^2 = 9 and the actual squared distance was 25, so
+  // checkCollision rejected it on pure distance and the `state === 'AIRBORNE'` guard
+  // at items-physics.js:69 was never reached. Deleting that guard entirely left the
+  // test green. It was a false pass — one of two the 2026-08-02 audit found.
+  //
+  // The fix is to sit the vehicle INSIDE the collision sphere (y=1 -> distSq=1 < 9)
+  // so distance can no longer do the rejecting, and to include a NORMAL-state control
+  // at the identical position that MUST be hit. The control is what makes this test
+  // impossible to pass vacuously: if the guard is removed, T5c starts failing.
   (() => {
-    const v = createVehicleState('P0', BALANCED_STATS);
-    v.x = 0; v.y = 5; v.z = 0; // High in air
-    v.state = 'AIRBORNE';
-    
-    const trap = createItemState('I0', 'TRAP', 0, 0, 0, 0, 0); // Directly underneath
-    
-    const remainingItems = updateItems([trap], [v], DT);
-    
-    assert(remainingItems.length === 1, 'T5: Trap is NOT consumed');
-    assert(v.state === 'AIRBORNE', 'T5: Vehicle dodges trap and remains AIRBORNE');
+    const trapAt = () => createItemState('I0', 'TRAP', 0, 0, 0, 0, 0);
+
+    // Control: same geometry, NORMAL state — the hit must land.
+    const control = createVehicleState('P0', BALANCED_STATS);
+    control.x = 0; control.y = 1; control.z = 0;
+    control.state = 'NORMAL';
+    const controlItems = updateItems([trapAt()], [control], DT);
+    assert(controlItems.length === 0, 'T5a: control — a NORMAL vehicle at this exact position IS hit');
+    assert(control.state === 'CRASHED', 'T5b: control — the trap crashes it');
+
+    // AIRBORNE: identical position, so only the state guard can save it.
+    const airborne = createVehicleState('P1', BALANCED_STATS);
+    airborne.x = 0; airborne.y = 1; airborne.z = 0;
+    airborne.state = 'AIRBORNE';
+    const airborneItems = updateItems([trapAt()], [airborne], DT);
+    assert(airborneItems.length === 1, 'T5c: AIRBORNE — trap is NOT consumed (guard, not distance)');
+    assert(airborne.state === 'AIRBORNE', 'T5d: AIRBORNE — vehicle keeps its state');
+
+    // CRASHED: the same guard's other half, which had zero coverage.
+    const crashed = createVehicleState('P2', BALANCED_STATS);
+    crashed.x = 0; crashed.y = 1; crashed.z = 0;
+    crashed.state = 'CRASHED';
+    const crashedItems = updateItems([trapAt()], [crashed], DT);
+    assert(crashedItems.length === 1, 'T5e: CRASHED — trap is NOT consumed (no chain-stunlock)');
   })();
 
   // ── RESULTS ─────────────────────────────────────────────────────────
