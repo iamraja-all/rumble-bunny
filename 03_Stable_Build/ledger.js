@@ -46,7 +46,7 @@ export function parseLedger(ledgerString) {
       }
     }
 
-    entities.push({
+    const entity = {
       id,
       type,
       x: Number(x),
@@ -58,7 +58,26 @@ export function parseLedger(ledgerString) {
       speed: Number(speed),
       state,
       modifiers
-    });
+    };
+
+    // R15 QUARANTINE — drop the row rather than admitting a poisoned entity.
+    //
+    // WHY drop instead of repair-to-zero: Number() returns NaN for anything
+    // unparseable, and on the client that NaN flows into mesh.position.set() and
+    // then into the camera lerp, which never recovers for the rest of the session.
+    // Repairing to 0 is what the serializer used to do, and it is precisely what
+    // made the original bug invisible — a kart teleported to the world origin reads
+    // as data, not as damage. Dropping the row keeps the last known-good state for
+    // that entity, which is both safer and visibly wrong if it ever happens.
+    //
+    // Big-O: O(1) per row — seven finite checks, no allocation. Safe at 60Hz.
+    if (
+      Number.isFinite(entity.x) && Number.isFinite(entity.y) && Number.isFinite(entity.z) &&
+      Number.isFinite(entity.rotX) && Number.isFinite(entity.rotY) && Number.isFinite(entity.rotZ) &&
+      Number.isFinite(entity.speed)
+    ) {
+      entities.push(entity);
+    }
   }
 
   return entities;
@@ -80,9 +99,19 @@ export function serializeLedger(entities) {
 
   const lines = [];
 
-  // Helper to clamp float length to compress network string
+  // Helper to clamp float length to compress network string.
+  //
+  // WHY the explicit Number.isFinite branch: the call sites used to read
+  // `formatFloat(entity.x || 0)`, and `NaN || 0` evaluates to 0. That silently
+  // rewrote a corrupted coordinate to the world origin, so a NaN-poisoned kart was
+  // broadcast to all eight players as a perfectly well-formed row parked at (0,0,0)
+  // — the corruption was real, permanent, and invisible to everyone. The behaviour
+  // here is deliberately unchanged (still 0), but it is now a stated decision rather
+  // than an accident of `||` truthiness. The actual fix is upstream: quarantine.js
+  // rejects non-finite input at the trust boundary so this can never trigger.
   const formatFloat = (num) => {
-    return Number(num).toFixed(3).replace(/\.?0+$/, '');
+    const n = Number(num);
+    return (Number.isFinite(n) ? n : 0).toFixed(3).replace(/\.?0+$/, '');
   };
 
   // Loop Complexity: O(N) where N is the number of entities
@@ -106,13 +135,13 @@ export function serializeLedger(entities) {
     const line = [
       entity.id,
       entity.type || 'VEHICLE',
-      formatFloat(entity.x || 0),
-      formatFloat(entity.y || 0),
-      formatFloat(entity.z || 0),
-      formatFloat(entity.rotX || 0),
-      formatFloat(entity.rotY || 0),
-      formatFloat(entity.rotZ || 0),
-      formatFloat(entity.speed || 0),
+      formatFloat(entity.x),
+      formatFloat(entity.y),
+      formatFloat(entity.z),
+      formatFloat(entity.rotX),
+      formatFloat(entity.rotY),
+      formatFloat(entity.rotZ),
+      formatFloat(entity.speed),
       entity.state || 'NORMAL',
       modifiersStr
     ].join('|');
