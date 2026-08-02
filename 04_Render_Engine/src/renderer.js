@@ -35,6 +35,55 @@ const PLAYER_COLORS = [
   0x3399ff, // P7 — Blue
 ];
 
+/**
+ * A frozen picture with the engine note still droning is the worst possible
+ * failure presentation — it looks like a hang with no cause. These put something
+ * on screen so the player (and the next person debugging it) knows what happened.
+ */
+function showFatalOverlay(message) {
+  let el = document.getElementById('rb-fatal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'rb-fatal';
+    el.style.cssText =
+      'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+      'z-index:9999;background:rgba(10,8,6,0.82);color:#ffb347;text-align:center;' +
+      'font:700 20px/1.5 Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;' +
+      'letter-spacing:0.08em;padding:24px;';
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.style.display = 'flex';
+}
+
+function hideFatalOverlay() {
+  const el = document.getElementById('rb-fatal');
+  if (el) el.style.display = 'none';
+}
+
+/**
+ * Release the GPU resources behind an object and everything under it.
+ *
+ * WHY THE `shared` GUARD: createProceduralKart deliberately shares one cache of
+ * geometries and materials across every kart (that sharing is what took the render
+ * from ~209 draw calls back down). Disposing a despawned kart must therefore free
+ * ONLY the things unique to it — its per-car paint material — and must never touch
+ * the shared cache, or the next kart to spawn would render with destroyed buffers.
+ */
+function disposeObject(root, shared) {
+  const sharedSet = new Set(shared ? Object.values(shared) : []);
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    if (child.geometry && !sharedSet.has(child.geometry)) child.geometry.dispose();
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    for (const m of mats) {
+      if (!m || sharedSet.has(m)) continue;
+      if (m.map) m.map.dispose();
+      m.dispose();
+    }
+  });
+}
+
 export class Renderer {
   constructor(canvas) {
     this.scene = new THREE.Scene();
@@ -105,6 +154,29 @@ export class Renderer {
     // Smooth camera follow state: High and Wide angle for better visibility
     this._camPos = new THREE.Vector3(0, 10, 18);
     this._camTarget = new THREE.Vector3(0, 0, -10); // Look slightly ahead of the car
+
+    // WHY THESE TWO HANDLERS EXIST:
+    // without a 'webglcontextlost' listener the browser's default behaviour is to
+    // drop the context permanently — the canvas simply stops updating, with no
+    // error and no console message. Meanwhile audio.js's oscillator runs on its own
+    // thread and keeps playing, so the game presents as "frozen picture, sound
+    // still going" with nothing anywhere saying why. Reported from play, and it
+    // took a screenshot-free guess to even locate. calling preventDefault() is what
+    // permits the browser to hand the context BACK, and 'webglcontextrestored' then
+    // lets us recover instead of requiring a reload.
+    this.contextLost = false;
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+      console.error('[renderer] WebGL context lost — rendering halted. Attempting recovery.');
+      showFatalOverlay('GRAPHICS CONTEXT LOST — attempting to recover…');
+    }, false);
+
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      console.warn('[renderer] WebGL context restored.');
+      hideFatalOverlay();
+    }, false);
 
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -667,11 +739,24 @@ export class Renderer {
       }
     }
 
-    // Despawn stale meshes
+    // Despawn stale meshes — and actually FREE them.
+    //
+    // WHY THIS LEAKED, AND WHY IT FROZE THE GAME:
+    // this used to be scene.remove() + meshes.delete() and nothing else.
+    // Removing a mesh from the scene graph drops the JS reference but does NOT
+    // release the GPU-side buffers — three.js requires an explicit dispose() on
+    // every geometry and material. Items get a brand-new SphereGeometry AND a new
+    // material each time they spawn, and track.js respawns all three pickups on a
+    // 10-second cycle for the entire race. That is hundreds of orphaned GPU
+    // allocations over a few minutes, climbing until the driver drops the WebGL
+    // context. When that happens the canvas stops updating but the Web Audio
+    // oscillator keeps running on its own thread — the game "freezes with only
+    // sound", which is exactly what was reported from play.
     for (const [id, mesh] of this.meshes.entries()) {
       if (!activeIds.has(id)) {
         this.scene.remove(mesh);
         this.meshes.delete(id);
+        disposeObject(mesh, this._kartParts);
       }
     }
   }

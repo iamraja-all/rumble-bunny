@@ -54,6 +54,28 @@ const menu = new MainMenu((action) => {
   // lastTime is already set, just let the existing loop continue
 });
 
+// WHY A GLOBAL ERROR TRAP:
+// animate() schedules its next frame BEFORE running its body, so an exception in
+// the body does not stop the loop — it just throws again every single frame. The
+// visible result is a picture frozen on the last good frame while audio.js's
+// oscillator keeps droning on its own thread, i.e. "the game is stuck and I can
+// only hear sound", with nothing on screen explaining it. This turns that silent
+// state into a stated one. It fires once and then stops, so a per-frame throw
+// cannot flood the console.
+let _reportedFatal = false;
+window.addEventListener('error', (e) => {
+  if (_reportedFatal) return;
+  _reportedFatal = true;
+  console.error('[fatal] render loop threw:', e.error || e.message);
+  const el = document.createElement('div');
+  el.style.cssText =
+    'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+    'z-index:9999;background:rgba(10,8,6,0.82);color:#ffb347;text-align:center;' +
+    'font:700 18px/1.5 Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;padding:24px;';
+  el.textContent = 'RENDER ERROR — ' + (e.message || 'unknown') + ' (see console)';
+  document.body.appendChild(el);
+});
+
 // 60fps Animation Loop
 function animate() {
   requestAnimationFrame(animate);
