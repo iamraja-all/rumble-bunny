@@ -1,3 +1,36 @@
+/* =========================================
+   RUMBLE BUNNY — ARCADE SKIN
+   PS2-era kart racer: warm, loud, high contrast.
+
+   NO @import, NO webfont, NO remote asset anywhere in this file.
+   The same reason hud.js dropped its Google Fonts import applies here:
+   idea.md:15 promises play over a mobile hotspot and idea.md:11 promises
+   Docker-hosted dedicated servers. On either of those a font request never
+   resolves and the menu renders in whatever the fallback happens to be.
+   Every face below is locally installed on Windows/macOS/Linux desktops, and
+   the checkered flag / stripes are CSS gradients, not images.
+========================================= */
+:root {
+  /* Condensed industrial display face — the arcade title voice.
+     Haettenschweiler + Franklin Gothic Heavy ship with Windows,
+     DIN Condensed + Impact ship with macOS, Impact ships with both. */
+  --rb-font-display: 'Haettenschweiler', 'Arial Narrow Bold', 'DIN Condensed',
+    'Franklin Gothic Heavy', 'Anton', Impact, 'Arial Black', sans-serif;
+  /* UI face — matches the stack hud.js already uses, so menu and HUD agree. */
+  --rb-font-ui: 'Bahnschrift', 'DIN Alternate', 'Franklin Gothic Medium',
+    'Segoe UI', Impact, 'Arial Narrow Bold', sans-serif;
+
+  --rb-ink: #17120f;
+  --rb-asphalt: #2a231e;
+  --rb-asphalt-hi: #3a312a;
+  --rb-steel: #6c6359;
+  --rb-chrome: #ded6c8;
+  --rb-cream: #fff5e6;
+  --rb-amber: #ffb400;
+  --rb-orange: #ff6a00;
+  --rb-red: #d81f14;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -19,120 +52,542 @@ body {
 #main-menu {
   position: absolute;
   top: 0; left: 0; width: 100%; height: 100%;
-  background: radial-gradient(circle at center, rgba(10, 10, 30, 0.6) 0%, rgba(5, 5, 15, 0.95) 100%);
+  /* Diagonal asphalt striping over a hot sunset wash — the 3D track still
+     reads through it, which is why the wash is not fully opaque. */
+  background:
+    repeating-linear-gradient(115deg,
+      rgba(0, 0, 0, 0) 0 36px,
+      rgba(0, 0, 0, 0.16) 36px 72px),
+    radial-gradient(ellipse at 50% 18%,
+      rgba(255, 150, 30, 0.34) 0%,
+      rgba(60, 26, 8, 0.86) 52%,
+      rgba(14, 10, 8, 0.96) 100%);
   display: flex;
   justify-content: center;
   align-items: center;
+  padding: 24px 16px;
+  overflow-y: auto;
   z-index: 2000;
   transition: opacity 0.5s ease;
+  font-family: var(--rb-font-ui);
+  color: var(--rb-cream);
+}
+
+#main-menu,
+#main-menu *,
+#main-menu *::before,
+#main-menu *::after {
+  box-sizing: border-box;
+}
+
+/* One focus treatment for everything in the menu, keyboard-only. */
+#main-menu :focus-visible {
+  outline: 3px solid var(--rb-amber);
+  outline-offset: 3px;
 }
 
 .menu-card {
-  background: rgba(20, 20, 40, 0.6);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 204, 255, 0.2);
-  border-radius: 16px;
-  padding: 40px;
+  position: relative;
+  background:
+    linear-gradient(180deg, var(--rb-asphalt-hi) 0%, var(--rb-asphalt) 55%, #1f1a16 100%);
+  border: 4px solid var(--rb-ink);
+  border-radius: 10px;
+  padding: 34px 32px 32px;
   text-align: center;
-  box-shadow: 0 0 40px rgba(0, 204, 255, 0.1), inset 0 0 20px rgba(0, 204, 255, 0.05);
-  max-width: 500px;
-  width: 90%;
+  box-shadow:
+    0 10px 0 rgba(0, 0, 0, 0.55),
+    0 22px 60px rgba(0, 0, 0, 0.6),
+    inset 0 2px 0 rgba(255, 255, 255, 0.09);
+  max-width: 520px;
+  width: 100%;
+  overflow: hidden;
 }
 
-.glitch {
-  font-size: 3rem;
-  font-weight: 900;
-  color: #fff;
-  text-shadow: 0 0 10px rgba(0, 204, 255, 0.8);
-  margin-bottom: 5px;
-  letter-spacing: 2px;
+/* Checkered flag strips, top and bottom — pure gradient, no image. */
+.menu-card::before,
+.menu-card::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background-color: var(--rb-cream);
+  background-image:
+    linear-gradient(45deg, var(--rb-ink) 25%, transparent 25%, transparent 75%, var(--rb-ink) 75%),
+    linear-gradient(45deg, var(--rb-ink) 25%, transparent 25%, transparent 75%, var(--rb-ink) 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 7px 7px;
+  animation: rb-checker-roll 1.6s linear infinite;
+}
+.menu-card::before { top: 0; }
+.menu-card::after { bottom: 0; }
+
+@keyframes rb-checker-roll {
+  to { background-position: 28px 0, 35px 7px; }
 }
 
-.subtitle {
-  color: #88ccff;
-  font-size: 0.9rem;
-  letter-spacing: 3px;
-  margin-bottom: 40px;
+/* ── Title ───────────────────────────── */
+.title-block {
+  margin: 22px 0 26px;
+}
+
+.rb-title {
+  margin: 0;
+  font-family: var(--rb-font-display);
+  font-weight: 400; /* the display faces are already heavy */
+  line-height: 0.88;
   text-transform: uppercase;
 }
 
+.rb-title-top {
+  display: block;
+  font-size: clamp(2.3rem, 11vw, 4rem);
+  letter-spacing: 0.07em;
+  color: var(--rb-chrome);
+  transform: skewX(-9deg);
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.6),
+    0 5px 14px rgba(0, 0, 0, 0.7);
+}
+
+/* Brushed-chrome fill, but only where the browser can clip a gradient to
+   glyphs — otherwise the flat --rb-chrome above stands, never invisible text. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .rb-title-top {
+    background-image: linear-gradient(180deg,
+      #ffffff 0%, #efe8da 40%, #8d8578 52%, #fbf6ec 74%, #cfc7b8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+.rb-title-bottom {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 0.04em 0.26em 0.1em;
+  font-size: clamp(2.5rem, 12vw, 4.4rem);
+  letter-spacing: 0.05em;
+  color: var(--rb-cream);
+  background: linear-gradient(180deg,
+    var(--rb-amber) 0%, var(--rb-orange) 48%, var(--rb-red) 100%);
+  border: 3px solid var(--rb-ink);
+  border-radius: 4px;
+  transform: skewX(-9deg);
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.5);
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.32);
+}
+
+.subtitle {
+  margin: 16px 0 0;
+  color: var(--rb-amber);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+/* ── Livery picker ───────────────────── */
+.color-picker-section {
+  margin-bottom: 28px;
+}
+
 .color-picker-section h3 {
-  font-size: 1rem;
-  color: #fff;
-  margin-bottom: 15px;
-  letter-spacing: 1px;
+  margin: 0 0 14px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--rb-chrome);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
 }
 
 .color-options {
   display: flex;
   justify-content: center;
-  gap: 15px;
-  margin-bottom: 40px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .color-swatch {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+  width: 76px;
+  padding: 7px 7px 6px;
+  font-family: var(--rb-font-ui);
+  background: linear-gradient(180deg, #4a4038 0%, #2c2520 100%);
+  border: 3px solid var(--rb-ink);
+  border-radius: 8px;
   cursor: pointer;
-  border: 2px solid transparent;
-  transition: all 0.2s ease;
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.5);
+}
+
+.swatch-chip {
+  display: block;
+  height: 40px;
+  border-radius: 4px;
+  background: var(--swatch);
+  box-shadow:
+    inset 0 7px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -9px 0 rgba(0, 0, 0, 0.28),
+    0 0 0 2px rgba(0, 0, 0, 0.45);
+}
+
+.swatch-name {
+  display: block;
+  margin-top: 7px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--rb-steel);
 }
 
 .color-swatch:hover {
-  transform: scale(1.1);
+  transform: translateY(-2px);
+  border-color: var(--rb-steel);
 }
 
 .color-swatch.active {
-  border: 2px solid #fff;
-  box-shadow: 0 0 20px currentColor;
-  transform: scale(1.2);
+  border-color: var(--rb-amber);
+  transform: translateY(-4px);
+  box-shadow:
+    0 0 0 3px rgba(255, 180, 0, 0.28),
+    0 7px 0 rgba(0, 0, 0, 0.5);
 }
 
+.color-swatch.active .swatch-name {
+  color: var(--rb-amber);
+}
+
+/* ── Actions ─────────────────────────── */
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.join-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+/* JOIN takes whatever the fixed-width code field leaves. Scoped here rather
+   than on .neon-btn so the column-stacked buttons keep an auto height. */
+.join-row .neon-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* .neon-btn keeps its name (it is the base button class throughout the menu)
+   but it is no longer neon: chunky, warm, and obviously pressable. */
 .neon-btn {
-  background: transparent;
-  border: 2px solid #00ccff;
-  color: #00ccff;
-  font-family: 'Bahnschrift', 'DIN Alternate', 'Franklin Gothic Medium', 'Segoe UI', Impact, 'Arial Narrow Bold', sans-serif;
-  font-size: 1.2rem;
+  min-height: 56px;
+  padding: 15px 26px;
+  font-family: var(--rb-font-ui);
+  font-size: 1.15rem;
   font-weight: 700;
-  padding: 15px 40px;
-  border-radius: 30px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--rb-cream);
+  background: linear-gradient(180deg, #514740 0%, #332b25 100%);
+  border: 3px solid var(--rb-ink);
+  border-radius: 8px;
   cursor: pointer;
-  letter-spacing: 2px;
-  transition: all 0.3s ease;
-  box-shadow: 0 0 15px rgba(0, 204, 255, 0.2), inset 0 0 10px rgba(0, 204, 255, 0.1);
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.55);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
 }
 
 .neon-btn:hover {
-  background: #00ccff;
-  color: #000;
-  box-shadow: 0 0 30px rgba(0, 204, 255, 0.6), inset 0 0 15px rgba(255, 255, 255, 0.8);
-  transform: translateY(-2px);
+  filter: brightness(1.12);
+}
+
+.neon-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+.btn-primary {
+  font-size: 1.35rem;
+  min-height: 64px;
+  background: linear-gradient(180deg,
+    var(--rb-amber) 0%, var(--rb-orange) 52%, var(--rb-red) 100%);
+  box-shadow:
+    0 6px 0 #7a1a06,
+    0 12px 22px rgba(216, 31, 20, 0.3);
+}
+
+.btn-primary:active {
+  box-shadow: 0 2px 0 #7a1a06;
+}
+
+.btn-secondary {
+  background: linear-gradient(180deg, #7d7367 0%, #4a423a 100%);
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.6);
+}
+
+.code-input {
+  width: 112px;
+  flex: 0 0 112px;
+  padding: 12px 8px;
+  font-family: var(--rb-font-display);
+  font-size: 1.7rem;
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--rb-ink);
+  background: var(--rb-cream);
+  border: 3px solid var(--rb-ink);
+  border-radius: 8px;
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.28);
+}
+
+.code-input::placeholder {
+  color: rgba(23, 18, 15, 0.35);
+  letter-spacing: 0.16em;
+}
+
+/* ── Lobby ───────────────────────────── */
+.lobby-card {
+  max-width: 460px;
+}
+
+.lobby-status {
+  margin: 22px 0 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--rb-amber);
+}
+
+/* Licence-plate treatment: the room code is the headline of this screen. */
+.code-plate {
+  display: block;
+  padding: 12px 18px 14px;
+  background: linear-gradient(180deg, #fffaf0 0%, #e8ddc8 100%);
+  border: 4px solid var(--rb-ink);
+  border-radius: 10px;
+  box-shadow:
+    0 6px 0 rgba(0, 0, 0, 0.5),
+    inset 0 -6px 0 rgba(0, 0, 0, 0.08);
+}
+
+.code-plate-label {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--rb-red);
+}
+
+.code-plate-value {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--rb-font-display);
+  font-size: clamp(2.8rem, 16vw, 4.6rem);
+  line-height: 1;
+  letter-spacing: 0.16em;
+  /* trailing letter-spacing would push the text off-centre */
+  text-indent: 0.16em;
+  color: var(--rb-ink);
+}
+
+.lobby-hint {
+  margin: 20px 0 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--rb-steel);
+  text-transform: uppercase;
+}
+
+.lobby-card .subtitle {
+  margin: 14px 0 20px;
+  color: var(--rb-steel);
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+}
+
+.lobby-card #start-btn,
+.results-card #restart-btn {
+  width: 100%;
 }
 
 .pulsing {
-  animation: pulse 1.5s infinite alternate;
+  animation: pulse 1.4s infinite alternate;
 }
 
 @keyframes pulse {
-  from { opacity: 0.5; text-shadow: 0 0 5px #fff; }
-  to { opacity: 1; text-shadow: 0 0 20px #0cf; }
+  from { opacity: 0.55; }
+  to   { opacity: 1; }
 }
 
 .loader {
-  width: 50px;
-  height: 50px;
-  border: 4px solid rgba(0, 204, 255, 0.2);
-  border-top-color: #00ccff;
+  width: 34px;
+  height: 34px;
+  border: 4px solid rgba(255, 180, 0, 0.2);
+  border-top-color: var(--rb-orange);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 30px auto;
+  animation: spin 0.9s linear infinite;
+  margin: 20px auto 0;
+}
+
+/* Once the room code is known the card is no longer "waiting on the server",
+   so the spinner goes away instead of running forever. */
+.lobby-card.has-code .loader {
+  display: none;
 }
 
 @keyframes spin {
   100% { transform: rotate(360deg); }
+}
+
+/* ── Results ─────────────────────────── */
+.results-card {
+  max-width: 440px;
+}
+
+.results-title {
+  margin: 22px 0 20px;
+}
+
+.results-title .rb-title-bottom {
+  font-size: clamp(1.9rem, 9vw, 2.9rem);
+}
+
+.result-list {
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+  border: 3px solid var(--rb-ink);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.45);
+}
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+.result-row-win {
+  background: linear-gradient(90deg, rgba(255, 180, 0, 0.28), rgba(255, 106, 0, 0.1));
+  color: var(--rb-amber);
+}
+
+.result-pos {
+  font-family: var(--rb-font-display);
+  font-size: 1.5rem;
+  min-width: 1.6em;
+  text-align: left;
+  color: var(--rb-orange);
+}
+
+.result-row-win .result-pos {
+  color: var(--rb-amber);
+}
+
+.result-name {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--rb-chrome);
+}
+
+/* ── Mobile (usable at 375px) ────────── */
+@media (max-width: 430px) {
+  #main-menu {
+    padding: 14px 10px;
+    align-items: flex-start;
+  }
+
+  .menu-card {
+    padding: 26px 16px 24px;
+    border-width: 3px;
+  }
+
+  .title-block {
+    margin: 16px 0 20px;
+  }
+
+  .subtitle {
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+  }
+
+  .color-options {
+    gap: 6px;
+  }
+
+  .color-swatch {
+    width: 60px;
+    padding: 5px 5px 4px;
+    border-width: 2px;
+  }
+
+  .swatch-chip {
+    height: 32px;
+  }
+
+  .swatch-name {
+    font-size: 0.52rem;
+    letter-spacing: 0.06em;
+  }
+
+  .neon-btn {
+    font-size: 1rem;
+    padding: 14px 12px;
+    letter-spacing: 0.1em;
+  }
+
+  .btn-primary {
+    font-size: 1.15rem;
+  }
+
+  .code-input {
+    width: 88px;
+    flex: 0 0 88px;
+    font-size: 1.4rem;
+  }
+
+  .code-plate {
+    padding: 10px 10px 12px;
+  }
+}
+
+/* ── Reduced motion ──────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .menu-card::before,
+  .menu-card::after,
+  .pulsing,
+  .loader {
+    animation: none !important;
+  }
+  .pulsing {
+    opacity: 1;
+  }
+  #main-menu,
+  .neon-btn,
+  .color-swatch {
+    transition: none !important;
+  }
 }
 
 #app {
@@ -143,6 +598,8 @@ body {
 
 /* =========================================
    TOUCH CONTROLS (PHASE 14)
+   Structure is untouched — input.js binds #touch-left, #touch-right,
+   #touch-gas, #touch-brake, #touch-drift by id. This is paint only.
 ========================================= */
 #touch-controls {
   position: absolute;
@@ -166,12 +623,14 @@ body {
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  background: rgba(0, 204, 255, 0.1);
-  border: 2px solid rgba(0, 204, 255, 0.5);
-  color: rgba(255, 255, 255, 0.7);
-  font-family: 'Bahnschrift', 'DIN Alternate', 'Franklin Gothic Medium', 'Segoe UI', Impact, 'Arial Narrow Bold', sans-serif;
+  background: rgba(255, 106, 0, 0.16);
+  border: 3px solid rgba(255, 180, 0, 0.65);
+  color: var(--rb-cream);
+  font-family: var(--rb-font-ui);
   font-weight: bold;
   font-size: 1.2rem;
+  letter-spacing: 0.08em;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(5px);
   -webkit-touch-callout: none;
   -webkit-user-select: none;
@@ -179,6 +638,6 @@ body {
 }
 
 .touch-btn:active {
-  background: rgba(0, 204, 255, 0.4);
+  background: rgba(255, 106, 0, 0.5);
   transform: scale(0.95);
 }

@@ -46,7 +46,18 @@ export class Renderer {
     // (see updateState), haze starting at 180 units washed over the mid-ground and
     // the whole frame read as milky. Starting it further out keeps distant geometry
     // grounded without fogging the part of the track the player is actually driving.
-    this.scene.fog = new THREE.Fog(0xaec9de, 300, 1100);
+    //
+    // WHY PUSHED OUT AGAIN, 300/1100 -> 500/1600: the island (scenery.js) is a
+    // 155 m disc centred on the circuit, so the furthest LAND the camera can ever
+    // see is the far rim at 255 m. Nothing on the island was being fogged at 300
+    // anyway — the only thing the near plane touched was the sea. And it hurt
+    // there: at a 55 m shoulder the first visible water is 136 m out and the water
+    // band runs from there to the horizon, so a near plane of 300 greyed out all
+    // but ~13 px of it and the coast read as haze. 500 leaves the whole near sea
+    // crisply blue. The far plane stays well under the camera's 2000 unit far
+    // plane so the ocean reaches full haze BEFORE it is clipped — otherwise the
+    // sea would end in a hard line against the sky.
+    this.scene.fog = new THREE.Fog(0xaec9de, 500, 1600);
 
     this.camera = new THREE.PerspectiveCamera(
       65,
@@ -211,7 +222,13 @@ export class Renderer {
 
     // Aim the directional sun light to match the visible sun in the sky.
     this.dirLight.position.copy(sun).multiplyScalar(150);
-    this.dirLight.target.position.set(0, 0, -100); // centre of the track
+    // Centre of the track — MEASURED, not guessed. Sampling the Catmull-Rom road
+    // curves gives a hull of x[-83.1, 83.3] z[-120.6, 70.6], so the centre is
+    // (0, -25). It said -100, and with the shadow camera only ±120 around the
+    // target that put the shadow frustum at z[-220, 20]: the entire return
+    // straight and the final corner (out to z = +70) cast no shadows at all,
+    // while 100 m of open sea to the north got a shadow pass all to itself.
+    this.dirLight.target.position.set(0, 0, -25);
 
     // Bake the sky into an environment map for IBL. PMREM needs a Scene, so we
     // render the sky in a throwaway scene, then keep the sky in the real scene
@@ -259,33 +276,14 @@ export class Renderer {
 
   // ── ENVIRONMENT ───────────────────────────────────────────────────────
   setupEnvironment() {
-    // Procedural Grass Texture
-    const grassCanvas = document.createElement('canvas');
-    grassCanvas.width = 512; grassCanvas.height = 512;
-    const gctx = grassCanvas.getContext('2d');
-    gctx.fillStyle = '#2d5a27'; gctx.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 10000; i++) {
-      gctx.fillStyle = Math.random() > 0.5 ? '#24491f' : '#366e2f';
-      gctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
-    }
-    const grassTex = new THREE.CanvasTexture(grassCanvas);
-    grassTex.wrapS = THREE.RepeatWrapping;
-    grassTex.wrapT = THREE.RepeatWrapping;
-    grassTex.repeat.set(50, 50);
-
-    // Ground plane
-    // WHY: MeshStandardMaterial (not Lambert) so the grass responds to the
-    // IBL environment map and sun with physically-plausible shading. Grass is
-    // fully rough / non-metallic.
-    // Sized to the island in scenery.js — a 1000-unit plane swallowed the coastline.
-    const groundGeo = new THREE.CircleGeometry(240, 72);
-    const groundMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1.0, metalness: 0.0 });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-
-    // Build the dynamic circuit track
+    // WHY THE GROUND PLANE IS NO LONGER BUILT HERE: it was a hard-coded
+    // CircleGeometry(240) at the origin, sitting next to an ISLAND_RADIUS = 240
+    // declared independently in scenery.js. Two numbers that must always agree,
+    // in two files, with nothing enforcing it — and the circle was centred on the
+    // origin while the circuit's actual bounding-box centre is (0, -25), so the
+    // grass and the cliff never really agreed about where the island was anyway.
+    // scenery.js now owns the whole island footprint (grass, sand, cliff skirt)
+    // and there is only one radius to get wrong.
     buildScenery(this.scene);
     buildCircuitMesh(this.scene);
   }
