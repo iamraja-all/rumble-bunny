@@ -8,6 +8,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ParticleSystem } from './particles.js';
 import { buildCircuitMesh } from './circuit-visuals.js';
+import { buildScenery } from './scenery.js';
 
 /**
  * Render Engine (Three.js Wrapper)
@@ -113,20 +114,13 @@ export class Renderer {
     dracoLoader.setDecoderPath('/draco/');
     loader.setDRACOLoader(dracoLoader);
     
-    // 1. Load City Environment (Littlest Tokyo CC0)
-    loader.load(
-      '/models/city.glb?v=' + Date.now(),
-      (gltf) => {
-        console.log('✅ City environment loaded successfully');
-        const city = gltf.scene;
-        // Littlest Tokyo is huge, scale it down
-        city.scale.set(0.05, 0.05, 0.05);
-        city.position.set(0, -2, -50); 
-        this.scene.add(city);
-      },
-      undefined,
-      (err) => console.error('Failed to load city:', err)
-    );
+    // 1. The Littlest Tokyo city.glb load lived here and has been removed.
+    //    WHY: it is a 4.1 MB Japanese street scene parked at (0, -2, -50) in the
+    //    middle of a COASTAL circuit — the wrong place entirely, and it was
+    //    cache-busted with `?v=' + Date.now()` so every single page load
+    //    re-downloaded all 4.1 MB. scenery.js now builds the island, cliffs, sea,
+    //    guardrails and palms procedurally: no download, no licence question, and
+    //    it actually matches the track it surrounds.
 
     // 2. Load Premium F1 / Sports Car (only when GLB karts are enabled)
     if (this.useGlbKart) loader.load(
@@ -283,7 +277,8 @@ export class Renderer {
     // WHY: MeshStandardMaterial (not Lambert) so the grass responds to the
     // IBL environment map and sun with physically-plausible shading. Grass is
     // fully rough / non-metallic.
-    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+    // Sized to the island in scenery.js — a 1000-unit plane swallowed the coastline.
+    const groundGeo = new THREE.CircleGeometry(240, 72);
     const groundMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1.0, metalness: 0.0 });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
@@ -291,6 +286,7 @@ export class Renderer {
     this.scene.add(ground);
 
     // Build the dynamic circuit track
+    buildScenery(this.scene);
     buildCircuitMesh(this.scene);
   }
 

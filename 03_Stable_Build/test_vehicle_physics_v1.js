@@ -271,6 +271,27 @@ function runTests() {
     }
 
     assert(v.rotY !== yawAtLaunch, 'T12: Steering spins the vehicle while airborne');
+
+    // THE ASSERTION THAT WAS MISSING (added 2026-08-02 after a player reported it):
+    // `rotY !== yawAtLaunch` is direction-blind, so it stayed green while the
+    // airborne branch used `+=` against the grounded branch's `-=`. Steering
+    // inverted the instant a kart left the ground — press right in the air, spin
+    // left. A control that reverses mid-jump is unplayable, and no test noticed.
+    assert(v.rotY < yawAtLaunch,
+      `T12b: airborne steer RIGHT decreases yaw, same as on the ground (got ${(v.rotY - yawAtLaunch).toFixed(3)})`);
+
+    // And the invariant behind it, stated directly: the same stick input must turn
+    // the car the same way whether or not it is touching the track.
+    let ground = createVehicleState('P1', BALANCED_STATS);
+    ground.speed = 20;
+    const groundYaw0 = ground.rotY;
+    for (let i = 0; i < 30; i++) {
+      ground = updateVehicle(ground, { throttle: 0.4, brake: 0, steer: 1.0, drift: false }, DT);
+    }
+    const groundDelta = ground.rotY - groundYaw0;
+    const airDelta = v.rotY - yawAtLaunch;
+    assert(Math.sign(groundDelta) === Math.sign(airDelta),
+      `T12c: grounded and airborne steering agree in direction (ground ${groundDelta.toFixed(3)}, air ${airDelta.toFixed(3)})`);
   })();
 
   // ── Test 13: No throttle while airborne ─────────────────────────────

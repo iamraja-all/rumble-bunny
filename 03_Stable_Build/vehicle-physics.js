@@ -212,9 +212,21 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
     // In air, steering input translates to stunt rotation (flips/spins)
     const stuntMultiplier = s.stunt_rate * dt * 2.0; // Base turning speed in air
     
-    // For testing, throttle/brake controls pitch (flips), steer controls yaw (spins/rolls)
+    // throttle/brake controls pitch (flips), steer controls yaw (flat spins)
     v.rotX += (throttle - brake) * stuntMultiplier;
-    v.rotY += steer * stuntMultiplier;
+
+    // WHY THIS IS `-=` AND NOT `+=` (fixed 2026-08-02, player-reported):
+    // the grounded branch above does `v.rotY -= steerRate` because in a
+    // Right-Handed Y-Up world a positive rotY is counter-clockwise seen from above,
+    // i.e. a LEFT turn — so steering right has to SUBTRACT. This branch added
+    // instead, so the moment a kart left the ground the steering silently inverted:
+    // press right in the air and the car span left. Reported from play, not caught
+    // by a test, because T12 only asserted that rotY changed at all — a
+    // direction-blind assertion, the same weakness that produced the earlier false
+    // passes. The stunt counter is unaffected either way: it measures
+    // |rotY - takeoff_rotY|, so the sign never mattered to scoring — only to the
+    // player's hands.
+    v.rotY -= steer * stuntMultiplier;
 
     // Check for completed 360-degree rotations (2π radians)
     // We compare current absolute rotation against the rotation when we took off
