@@ -6,17 +6,25 @@ import { updateVehicle, launchVehicle, applyCarCollisions } from './vehicle-phys
 import { updateItems } from './items-physics.js';
 import { RaceManager } from './race.js';
 import { BotController } from './bots.js';
+import { createTrafficVehicles, updateTrafficVehicle, advanceTrafficProgress } from './traffic.js';
+import { RoomManager } from './room-manager.js';
+import express from 'express';
+import { createServer } from 'http';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-/**
- * Headless WebSocket Server Wrapper
- * 
- * WHY:
- * Provides the actual network integration for the game state. Runs the 60fps
- * deterministic loop, processes raw client inputs, and broadcasts the 
- * pipe-delimited AI Whisperer ledger to all clients.
- */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const PORT = 8080;
+const app = express();
+// Serve the built static files from the /public directory (which Docker will populate)
+// In local dev, this directory might not exist if they use Vite dev server, but in prod it will.
+const staticPath = path.join(__dirname, '..', 'public');
+app.use(express.static(staticPath));
+
+const server = createServer(app);
+
+const PORT = process.env.PORT || 8080;
 const TICK_RATE = 60;
 const DT = 1 / TICK_RATE;
 
@@ -29,65 +37,89 @@ const BALANCED_STATS = {
   boost_mult: 1.5,
 };
 
-const wss = new WebSocketServer({ port: PORT });
-const lobby = new Lobby('MainRoom', BALANCED_STATS);
-const raceManager = new RaceManager();
-const bots = new Map();
-let activeItems = [];
+const wss = new WebSocketServer({ server });
+const roomManager = new RoomManager();
 let clientCounter = 0;
 
-console.log(`🚀 Rumble-Bunny Headless Server starting on ws://localhost:${PORT}`);
-
-// Spawn 7 AI bots to fill the lobby so there's always a full 8-player race
-for (let i = 1; i <= 7; i++) {
-  const botId = `bot-${i}`;
-  lobby.join(botId);
-  raceManager.registerPlayer(botId);
-  bots.set(botId, new BotController(botId));
-  console.log(`🤖 Spawning AI opponent: ${botId}`);
-}
-
-// Spawn 3 Traffic Vehicles that act as moving obstacles
-const trafficIds = [];
-for (let i = 1; i <= 3; i++) {
-  const tId = `traffic-${i}`;
-  lobby.join(tId); // This gets assigned a PID like P8, P9
-  trafficIds.push(clientId => lobby.players.get(clientId));
-  console.log(`🚗 Spawning Traffic Obstacle: ${tId}`);
-  // Force their starting positions way down the track
-  const v = lobby.getVehicle(tId);
-  v.z = -50 - (i * 60); // Spread them out down the track
-  v.x = (i % 2 === 0) ? -4 : 4; // Alternate left/right lanes
-}
+server.listen(PORT, () => {
+  console.log(`dYs? Rumble-Bunny Web & Headless Server starting on http://localhost:${PORT}`);
+});
 
 wss.on('connection', (ws) => {
   const clientId = `client-${++clientCounter}`;
-  
-  // Create player entity (assigns a PID like 'P7')
-  const pid = lobby.join(clientId);
-  raceManager.registerPlayer(clientId);
+  ws.clientId = clientId;
+  ws.roomCode = null;
 
-  // If the race is waiting, start the countdown now that a real player joined
-  if (raceManager.state === 'WAITING') {
-    raceManager.startCountdown();
-  }
-
-  console.log(`[+] Client connected: ${clientId} assigned ${pid}`);
-  ws.send(`INIT|${pid}`);
-
-  // Register player for race tracking
-  raceManager.registerPlayer(clientId);
-
-  // Default input state
-  const v = lobby.getVehicle(clientId);
-  v._input = { throttle: 0, brake: 0, steer: 0, drift: false };
+  console.log(`[+] Client connected: ${clientId}`);
 
   ws.on('message', (message) => {
-    // Expected format: INPUT|throttle|brake|steer|drift
     const msg = message.toString().trim();
-    if (msg.startsWith('INPUT|')) {
+    
+    // Handshake
+    if (!ws.roomCode) {
+      if (msg.startsWith('HOST|')) {
+        const parts = msg.split('|');
+        const color = parts[1] || '#ff00ff';
+        
+        const room = roomManager.createRoom(Lobby, RaceManager);
+        
+        // Spawn traffic immediately so it's there
+        room.trafficList = createTrafficVehicles(BALANCED_STATS);
+        
+        const joinRes = roomManager.joinRoom(room.code, clientId);
+        if (joinRes) {
+          ws.roomCode = room.code;
+          ws.send(`INIT|${joinRes.pid}|${room.code}`);
+          const v = room.lobby.getVehicle(clientId);
+          if (v) {
+            v.color = color;
+            v.modifiers.color_sync = parseInt(color.replace('#', ''), 16);
+            v._input = { throttle: 0, brake: 0, steer: 0, drift: false };
+          }
+        }
+      } else if (msg.startsWith('JOIN|')) {
+        const parts = msg.split('|');
+        const code = parts[1];
+        const color = parts[2] || '#ff00ff';
+
+        const joinRes = roomManager.joinRoom(code, clientId);
+        if (joinRes) {
+          ws.roomCode = joinRes.room.code;
+          ws.send(`INIT|${joinRes.pid}|${joinRes.room.code}`);
+          const v = joinRes.room.lobby.getVehicle(clientId);
+          if (v) {
+            v.color = color;
+            v.modifiers.color_sync = parseInt(color.replace('#', ''), 16);
+            v._input = { throttle: 0, brake: 0, steer: 0, drift: false };
+          }
+        } else {
+          ws.send(`ERROR|Invalid Code or Room Full`);
+          ws.close();
+        }
+      }
+      return; // Stop processing further until handshake completes
+    }
+
+    // Normal play messages
+    const room = roomManager.getRoom(ws.roomCode);
+    if (!room) return;
+
+    if (msg.startsWith('START')) {
+      if (room.raceManager.state === 'WAITING') {
+        // Fill remaining slots with bots
+        let botIndex = 1;
+        while (room.lobby.players.size < 8) {
+          const botId = `bot-${room.code}-${botIndex++}`;
+          room.lobby.join(botId);
+          room.raceManager.registerPlayer(botId);
+          room.bots.set(botId, new BotController(botId));
+        }
+        room.raceManager.startCountdown();
+      }
+    } else if (msg.startsWith('INPUT|')) {
       const parts = msg.split('|');
-      if (parts.length >= 5) {
+      const v = room.lobby.getVehicle(clientId);
+      if (v && parts.length >= 5) {
         v._input.throttle = Math.max(0, Math.min(1, Number(parts[1])));
         v._input.brake = Math.max(0, Math.min(1, Number(parts[2])));
         v._input.steer = Math.max(-1, Math.min(1, Number(parts[3])));
@@ -98,86 +130,91 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log(`[-] Client disconnected: ${clientId}`);
-    raceManager.removePlayer(clientId);
-    lobby.leave(clientId);
+    if (ws.roomCode) {
+      roomManager.leaveRoom(ws.roomCode, clientId);
+    }
   });
 });
 
-// ── 60fps Core Game Loop ──────────────────────────────────────────────
 setInterval(() => {
-  // 0. Update Spawners
-  const newItems = updateSpawners(DT, activeItems);
-  if (newItems.length > 0) {
-    activeItems.push(...newItems);
-  }
+  for (const [code, room] of roomManager.rooms.entries()) {
+    // 0. Update Spawners
+    const newItems = updateSpawners(DT, room.activeItems);
+    if (newItems.length > 0) {
+      room.activeItems.push(...newItems);
+    }
 
-  // 1. Update Physics for all vehicles
-  const canGo = raceManager.canAccelerate();
-  const raceInfo = raceManager.getRaceInfo();
+    // 1. Update Physics for all vehicles (Lobby)
+    const canGo = room.raceManager.canAccelerate();
+    const raceInfo = room.raceManager.getRaceInfo();
 
-  for (const [clientId, v] of lobby.players.entries()) {
-    let input;
-    
-    // Check if this player is an AI bot
-    if (bots.has(clientId)) {
-      const raceState = raceManager.raceStates.get(clientId);
-      // Bots generate their own input based on the track and race state
-      input = bots.get(clientId).generateInput(v, raceState, raceInfo);
-      v._input = input;
-    } else if (clientId.startsWith('traffic-')) {
-      // Traffic drives slowly straight ahead
-      input = { throttle: 0.3, brake: 0, steer: 0, drift: false };
+    for (const [clientId, v] of room.lobby.players.entries()) {
+      let input;
+      if (room.bots.has(clientId)) {
+        const raceState = room.raceManager.raceStates.get(clientId);
+        input = room.bots.get(clientId).generateInput(v, raceState, raceInfo);
+        v._input = input;
+      } else {
+        input = v._input;
+      }
+
+      const finalInput = canGo ? input : { throttle: 0, brake: 0, steer: 0, drift: false };
+      let newV = updateVehicle(v, finalInput, DT);
       
-      // If traffic reaches the end of the track (Z < -250), loop them back to the start
-      if (v.z < -250) {
-        v.z = 10;
+      if (newV.state !== 'AIRBORNE' && newV.state !== 'CRASHED') {
+        const pad = getLaunchPadAt(newV.x, newV.z);
+        if (pad) {
+          newV = launchVehicle(newV, pad.power);
+        }
       }
-    } else {
-      input = v._input; // Human input (received via WebSocket)
+
+      newV._input = v._input;
+      room.lobby.players.set(clientId, newV);
     }
 
-    // During countdown, zero out throttle so karts can't move
-    const finalInput = canGo ? input : { throttle: 0, brake: 0, steer: 0, drift: false };
-    
-    let newV = updateVehicle(v, finalInput, DT);
-    
-    // Check Launch Pads
-    if (newV.state !== 'AIRBORNE' && newV.state !== 'CRASHED') {
-      const pad = getLaunchPadAt(newV.x, newV.z);
-      if (pad) {
-        newV = launchVehicle(newV, pad.power);
+    // Update Traffic
+    for (const t of room.trafficList) {
+      const input = updateTrafficVehicle(t, DT);
+      t.vehicle = updateVehicle(t.vehicle, input, DT);
+      if (t.vehicle.state !== 'AIRBORNE' && t.vehicle.state !== 'CRASHED') {
+        const pad = getLaunchPadAt(t.vehicle.x, t.vehicle.z);
+        if (pad) {
+          t.vehicle = launchVehicle(t.vehicle, pad.power);
+        }
       }
+      advanceTrafficProgress(t);
     }
 
-    newV._input = v._input;
-    lobby.players.set(clientId, newV);
-  }
+    // 2. Update Race
+    room.raceManager.update(DT, room.lobby);
 
-  // 2. Update Race (checkpoint/lap detection — writes to vehicle modifiers)
-  raceManager.update(DT, lobby);
+    // 3. Update Items & Collisions
+    const updatedVehicles = room.lobby.getAllVehicles();
+    const allVehicles = [...updatedVehicles, ...room.trafficList.map(t => t.vehicle)];
+    
+    room.activeItems = updateItems(room.activeItems, allVehicles, DT);
+    applyCarCollisions(allVehicles);
 
-  // 3. Update Items & Collisions
-  const updatedVehicles = lobby.getAllVehicles();
-  activeItems = updateItems(activeItems, updatedVehicles, DT);
-  applyCarCollisions(updatedVehicles);
+    // 4. Generate State Frame
+    const vehicleLedger = serializeLedger(allVehicles);
+    const itemLedger = serializeLedger(room.activeItems);
+    
+    const raceLine = `RACE|${raceInfo.state}|${raceInfo.countdown}|${raceInfo.raceTime.toFixed(1)}|${raceInfo.totalLaps}|${raceInfo.finishOrder.length}`;
+    
+    let fullFrame = raceLine;
+    if (raceInfo.finishOrder.length > 0) {
+      fullFrame += '\nLEADERBOARD|' + JSON.stringify(raceInfo.finishOrder);
+    }
+    if (vehicleLedger) fullFrame += '\n' + vehicleLedger;
+    if (itemLedger) fullFrame += '\n' + itemLedger;
 
-  // 4. Generate State Frame
-  const vehicleLedger = lobby.getLedgerFrame();
-  const itemLedger = serializeLedger(activeItems);
-  
-  // Prepend race metadata as a special RACE line
-  const raceLine = `RACE|${raceInfo.state}|${raceInfo.countdown}|${raceInfo.raceTime.toFixed(1)}|${raceInfo.totalLaps}|${raceInfo.finishOrder.length}`;
-  
-  let fullFrame = raceLine;
-  if (vehicleLedger) fullFrame += '\n' + vehicleLedger;
-  if (itemLedger) fullFrame += '\n' + itemLedger;
-
-  // 5. Broadcast
-  if (fullFrame.length > 0) {
-    wss.clients.forEach((client) => {
-      if (client.readyState === 1) { // WebSocket.OPEN
-        client.send(fullFrame);
-      }
-    });
+    // 5. Broadcast to specific room
+    if (fullFrame.length > 0) {
+      wss.clients.forEach((client) => {
+        if (client.readyState === 1 && client.roomCode === code) { // WebSocket.OPEN
+          client.send(fullFrame);
+        }
+      });
+    }
   }
 }, 1000 / TICK_RATE);

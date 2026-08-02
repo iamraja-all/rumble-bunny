@@ -1,28 +1,20 @@
-/**
- * 2D Canvas Minimap Overlay
- * 
- * WHY:
- * Instead of adding a second WebGL camera and rendering the 3D scene twice (which
- * kills performance), we draw a simple 2D map over the UI. It directly reads the
- * physics ledger state and plots dots.
- */
+import { CIRCUIT_DEF } from '../../03_Stable_Build/circuit-track.js';
 
 export class Minimap {
   constructor() {
-    this.width = 150;
-    this.height = 300;
+    this.width = 200;
+    this.height = 200;
     
-    // The track boundaries in physics units
-    this.minX = -40;
-    this.maxX = 40;
-    this.minZ = -220; // past the last checkpoint
-    this.maxZ = 20;   // behind the start line
+    // Coastal Stunt Circuit bounding box approx
+    this.minX = -80;
+    this.maxX = 80;
+    this.minZ = -120;
+    this.maxZ = 80;
 
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.width;
     this.canvas.height = this.height;
     
-    // Style and position it in the bottom right
     this.canvas.style.cssText = `
       position: absolute;
       bottom: 20px;
@@ -39,79 +31,74 @@ export class Minimap {
     this.ctx = this.canvas.getContext('2d');
   }
 
-  /**
-   * Map physics coordinates to canvas pixel coordinates
-   */
   _mapCoord(x, z) {
-    // X goes from left to right
     const px = ((x - this.minX) / (this.maxX - this.minX)) * this.width;
-    // Z goes from bottom to top (negative Z is forward)
     const py = this.height - (((this.maxZ - z) / (this.maxZ - this.minZ)) * this.height);
     return { px, py };
   }
 
   draw(entities, localPid) {
-    // Clear the canvas
     this.ctx.clearRect(0, 0, this.width, this.height);
 
-    // Draw a subtle center line for the track
+    // Draw Main Road
     this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    this.ctx.setLineDash([5, 5]);
+    this.ctx.lineWidth = 6;
     this.ctx.beginPath();
-    const top = this._mapCoord(0, this.minZ);
-    const bottom = this._mapCoord(0, this.maxZ);
-    this.ctx.moveTo(top.px, top.py);
-    this.ctx.lineTo(bottom.px, bottom.py);
-    this.ctx.stroke();
-    this.ctx.setLineDash([]); // reset
-
-    // Draw checkpoints as horizontal lines
-    const cps = [-40, -80, -130, -180];
-    this.ctx.strokeStyle = 'rgba(0, 204, 255, 0.3)';
-    this.ctx.lineWidth = 2;
-    for (const z of cps) {
-      const p1 = this._mapCoord(-20, z);
-      const p2 = this._mapCoord(20, z);
-      this.ctx.beginPath();
-      this.ctx.moveTo(p1.px, p1.py);
-      this.ctx.lineTo(p2.px, p2.py);
-      this.ctx.stroke();
+    let first = true;
+    for (const p of CIRCUIT_DEF.road.mainPoints) {
+      const { px, py } = this._mapCoord(p.x, p.z);
+      if (first) { this.ctx.moveTo(px, py); first = false; }
+      else this.ctx.lineTo(px, py);
     }
-
-    // Draw Finish Line
-    const fin1 = this._mapCoord(-20, -5);
-    const fin2 = this._mapCoord(20, -5);
-    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    this.ctx.beginPath();
-    this.ctx.moveTo(fin1.px, fin1.py);
-    this.ctx.lineTo(fin2.px, fin2.py);
+    // Connect back to start
+    const start = this._mapCoord(CIRCUIT_DEF.road.mainPoints[0].x, CIRCUIT_DEF.road.mainPoints[0].z);
+    this.ctx.lineTo(start.px, start.py);
     this.ctx.stroke();
+
+    // Draw Shortcut
+    this.ctx.strokeStyle = 'rgba(255, 165, 0, 0.2)';
+    this.ctx.lineWidth = 4;
+    this.ctx.beginPath();
+    first = true;
+    for (const p of CIRCUIT_DEF.road.shortcutPoints) {
+      const { px, py } = this._mapCoord(p.x, p.z);
+      if (first) { this.ctx.moveTo(px, py); first = false; }
+      else this.ctx.lineTo(px, py);
+    }
+    this.ctx.stroke();
+
+    // Draw gates
+    for (const gate of CIRCUIT_DEF.gates) {
+      const { px, py } = this._mapCoord(gate.center.x, gate.center.z);
+      this.ctx.fillStyle = gate.id === 'G0' ? 'white' : 'rgba(0, 204, 255, 0.5)';
+      this.ctx.fillRect(px - 2, py - 2, 4, 4);
+    }
 
     // Draw Vehicles
     for (const entity of entities) {
       if (entity.type === 'VEHICLE') {
         const { px, py } = this._mapCoord(entity.x, entity.z);
         const isLocal = entity.id === localPid;
+        const isOnShortcut = entity.modifiers && entity.modifiers.route === 'SHORTCUT';
 
         this.ctx.beginPath();
         this.ctx.arc(px, py, isLocal ? 6 : 4, 0, Math.PI * 2);
         
         if (isLocal) {
-          this.ctx.fillStyle = '#00ccff'; // Cyan for local player
+          this.ctx.fillStyle = '#00ccff'; 
           this.ctx.shadowColor = '#00ccff';
           this.ctx.shadowBlur = 10;
         } else {
-          this.ctx.fillStyle = '#ff3333'; // Red for opponents
+          // Color code based on route
+          this.ctx.fillStyle = isOnShortcut ? '#ffaa00' : '#ff3333';
           this.ctx.shadowBlur = 0;
         }
         
         this.ctx.fill();
         
-        // If local player, draw a little direction indicator
         if (isLocal) {
           this.ctx.beginPath();
           this.ctx.moveTo(px, py);
-          // Angle mapping (rotY=0 is facing -Z)
           const dx = Math.sin(entity.rotY) * 10;
           const dy = -Math.cos(entity.rotY) * 10;
           this.ctx.lineTo(px + dx, py + dy);

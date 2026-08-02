@@ -25,42 +25,70 @@ let network = null;
 let lastTime = performance.now();
 
 // Instantiate the Main Menu
-const menu = new MainMenu((selectedColor) => {
-  // 1. User clicked "ENTER LOBBY"
+const menu = new MainMenu((action) => {
+  if (action.type === 'START') {
+    if (network && network.ws.readyState === WebSocket.OPEN) {
+      network.ws.send('START');
+    }
+    return;
+  }
+  
+  // 1. User clicked HOST or JOIN
   
   // Browsers require user interaction to start AudioContext, this click qualifies
   audio.init();
 
   // 2. Connect to the WebSocket
+  const isLocalDev = window.location.port === '5173';
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws`;
-  network = new NetworkController(wsUrl);
+  const wsUrl = isLocalDev 
+    ? `ws://localhost:8080` 
+    : `${protocol}//${window.location.host}`;
+  network = new NetworkController(wsUrl, action);
   
   // NOTE: For now, the color is selected but we aren't sending it to the server yet.
   // In a future phase, we will pass it in the INIT message so the server spawns 
   // the kart with the correct color!
 
-  // Start the animation loop
-  lastTime = performance.now();
-  requestAnimationFrame(animate);
+// Start the animation loop
+  // lastTime is already set, just let the existing loop continue
 });
 
 // 60fps Animation Loop
 function animate() {
   requestAnimationFrame(animate);
-  if (!network) return;
 
   const now = performance.now();
   const dt = (now - lastTime) / 1000.0;
   lastTime = now;
 
+  if (!network) {
+    // Menu background animation
+    const time = now * 0.0005;
+    const radius = 60;
+    renderer.camera.position.set(Math.sin(time) * radius, 30, Math.cos(time) * radius);
+    renderer.camera.lookAt(0, 0, 0);
+    renderer.render();
+    return;
+  }
+
   const state = network.getLatestState();
   if (state && state.length > 0) {
+    if (network.roomCode && menu.container && menu.container.parentNode) {
+      menu.showLobbyCode(network.roomCode);
+    }
+
     // Hide menu and show HUD once race state begins broadcasting
     if (network.raceInfo.state === 'COUNTDOWN' || network.raceInfo.state === 'RACING') {
       menu.hide();
-      document.getElementById('hud').style.display = 'block';
+      if (!window.resultsShown) document.getElementById('hud').style.display = 'block';
     }
+    if (network.raceInfo.state === 'COMPLETE' && !window.resultsShown && network.leaderboard.length > 0) {
+      window.resultsShown = true;
+      document.getElementById('hud').style.display = 'none';
+      menu.showResults(network.leaderboard);
+    }
+
     renderer.updateState(state, network.pid);
     hud.update(state, network.pid, network.raceInfo);
     

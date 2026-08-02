@@ -140,3 +140,45 @@ body {
   width: 100vw;
   height: 100vh;
 }
+
+/* =========================================
+   TOUCH CONTROLS (PHASE 14)
+========================================= */
+#touch-controls {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 100;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 40px;
+  box-sizing: border-box;
+}
+
+.touch-left-cluster, .touch-right-cluster {
+  display: flex;
+  gap: 20px;
+  pointer-events: auto;
+}
+
+.touch-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(0, 204, 255, 0.1);
+  border: 2px solid rgba(0, 204, 255, 0.5);
+  color: rgba(255, 255, 255, 0.7);
+  font-family: 'Orbitron', sans-serif;
+  font-weight: bold;
+  font-size: 1.2rem;
+  backdrop-filter: blur(5px);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.touch-btn:active {
+  background: rgba(0, 204, 255, 0.4);
+  transform: scale(0.95);
+}

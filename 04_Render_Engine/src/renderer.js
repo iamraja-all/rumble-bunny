@@ -7,6 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ParticleSystem } from './particles.js';
+import { buildCircuitMesh } from './circuit-visuals.js';
 
 /**
  * Render Engine (Three.js Wrapper)
@@ -279,193 +280,8 @@ export class Renderer {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Procedural Asphalt Texture
-    const roadCanvas = document.createElement('canvas');
-    roadCanvas.width = 512; roadCanvas.height = 512;
-    const rctx = roadCanvas.getContext('2d');
-    rctx.fillStyle = '#1a1a1a'; rctx.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 20000; i++) {
-      rctx.fillStyle = Math.random() > 0.5 ? '#111' : '#222';
-      rctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
-    }
-    // Track boundaries (white lines)
-    rctx.fillStyle = '#ffffff';
-    rctx.fillRect(10, 0, 15, 512); // left line
-    rctx.fillRect(512 - 25, 0, 15, 512); // right line
-    
-    const roadTex = new THREE.CanvasTexture(roadCanvas);
-    roadTex.wrapS = THREE.RepeatWrapping;
-    roadTex.wrapT = THREE.RepeatWrapping;
-    roadTex.repeat.set(1, 50);
-
-    // Road plane (X: -40 to 40, Z: +50 to -250)
-    const roadWidth = 80; // Total track width is 80 (±40)
-    const roadLength = 300;
-    const roadGeo = new THREE.PlaneGeometry(roadWidth, roadLength);
-    // WHY: asphalt is smoother than grass — a lower roughness lets the sky
-    // reflect faintly off the surface, reading as real tarmac rather than a
-    // flat grey plane.
-    const roadMat = new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.65, metalness: 0.0 });
-    const road = new THREE.Mesh(roadGeo, roadMat);
-    road.rotation.x = -Math.PI / 2;
-    road.position.set(0, 0.01, -100);
-    road.receiveShadow = true;
-    this.scene.add(road);
-    
-    // Add 3D Stadium
-    this.setupStadium();
-
-    // Starting line
-    const startGeo = new THREE.PlaneGeometry(100, 5);
-    const startMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const startLine = new THREE.Mesh(startGeo, startMat);
-    startLine.rotation.x = -Math.PI / 2;
-    startLine.position.y = 0.01;
-    this.scene.add(startLine);
-
-    // Ramps — use 3D wedge shapes instead of flat planes
-    this.createRamp3D(0, -50, 20, 5, 2);   // ramp_1
-    this.createRamp3D(0, -150, 20, 5, 3);  // ramp_2
-
-    // Item spawner pads
-    this.createSpawnerPad(-5, -30);
-    this.createSpawnerPad(5, -30);
-    this.createSpawnerPad(0, -100);
-
-    // Checkpoint gates (matching race.js CHECKPOINTS)
-    this.createCheckpointGate(0, -40, 40, 0x00ccff, 'CP1');
-    this.createCheckpointGate(0, -80, 40, 0x00ccff, 'CP2');
-    this.createCheckpointGate(0, -130, 40, 0x00ccff, 'CP3');
-    this.createCheckpointGate(0, -180, 40, 0x00ccff, 'CP4');
-
-    // Finish line arch
-    this.createCheckpointGate(0, -5, 40, 0xffffff, 'FINISH');
-  }
-
-  // ── STADIUM (HIGH FIDELITY ENVIRONMENT) ───────────────────────────────
-  setupStadium() {
-    const group = new THREE.Group();
-    
-    // Grandstands (Left and Right of the track)
-    // WHY: Standard material so the concrete stands catch the sun/IBL and show
-    // form; slight metalness + mid roughness reads as painted concrete.
-    const standLength = 260;
-    const standGeo = new THREE.BoxGeometry(20, 20, standLength);
-    const standMat = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.8, metalness: 0.1 });
-    
-    // Left stand
-    const leftStand = new THREE.Mesh(standGeo, standMat);
-    leftStand.position.set(-60, 10, -100);
-    leftStand.rotation.z = -Math.PI / 8; // slanted seating
-    leftStand.castShadow = true;
-    group.add(leftStand);
-    
-    // Right stand
-    const rightStand = new THREE.Mesh(standGeo, standMat);
-    rightStand.position.set(60, 10, -100);
-    rightStand.rotation.z = Math.PI / 8;
-    rightStand.castShadow = true;
-    group.add(rightStand);
-
-    // Neon Billboards
-    // WHY: pushed well above 1.0 luminance (colour multiplied bright) so they
-    // clear the bloom threshold (0.85) and actually glow through the post pass.
-    const billboardGeo = new THREE.PlaneGeometry(30, 10);
-    const billboardMat = new THREE.MeshBasicMaterial({ color: 0x33ddff });
-    billboardMat.color.multiplyScalar(1.3); // slightly over-bright to trigger a subtle bloom
-    
-    for (let i = 0; i < 4; i++) {
-      const zPos = -30 - (i * 60);
-      
-      const leftBoard = new THREE.Mesh(billboardGeo, billboardMat);
-      leftBoard.position.set(-45, 15, zPos);
-      leftBoard.rotation.y = Math.PI / 4;
-      group.add(leftBoard);
-      
-      const rightBoard = new THREE.Mesh(billboardGeo, billboardMat);
-      rightBoard.position.set(45, 15, zPos);
-      rightBoard.rotation.y = -Math.PI / 4;
-      group.add(rightBoard);
-    }
-    
-    // Enclosing stadium walls (Back and Front)
-    const wallGeo = new THREE.BoxGeometry(160, 40, 10);
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.9, metalness: 0.1 });
-    
-    const backWall = new THREE.Mesh(wallGeo, wallMat);
-    backWall.position.set(0, 20, -250);
-    group.add(backWall);
-
-    const frontWall = new THREE.Mesh(wallGeo, wallMat);
-    frontWall.position.set(0, 20, 50);
-    group.add(frontWall);
-
-    this.scene.add(group);
-  }
-
-  createRamp3D(x, z, width, length, height) {
-    // Build a wedge from a custom buffer geometry
-    const shape = new THREE.Shape();
-    shape.moveTo(0, 0);
-    shape.lineTo(length, 0);
-    shape.lineTo(0, height);
-    shape.closePath();
-
-    const extrudeSettings = { depth: width, bevelEnabled: false };
-    const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-
-    // WHY: Standard material so the ramp catches sun/IBL like the rest of the
-    // scene instead of looking like a flat orange decal.
-    const mat = new THREE.MeshStandardMaterial({ color: 0xff8800, roughness: 0.6, metalness: 0.2 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-
-    // Position and rotate so it sits on the ground with the slope facing +Z (toward the player)
-    mesh.rotation.y = Math.PI / 2;
-    mesh.position.set(x + width / 2, 0, z - length / 2);
-    this.scene.add(mesh);
-  }
-
-  createSpawnerPad(x, z) {
-    // Glowing ring instead of flat circle
-    const ringGeo = new THREE.TorusGeometry(2, 0.3, 8, 24);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x66ffff });
-    ringMat.color.multiplyScalar(1.3); // WHY: slightly over-bright so the spawner ring blooms gently
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x, 0.3, z);
-    this.scene.add(ring);
-  }
-
-  createCheckpointGate(x, z, width, color) {
-    const group = new THREE.Group();
-    const pillarHeight = 8;
-    const pillarRadius = 0.4;
-    const halfW = width / 2;
-
-    // Left pillar
-    const pillarGeo = new THREE.CylinderGeometry(pillarRadius, pillarRadius, pillarHeight, 8);
-    const pillarMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.0, roughness: 0.4, metalness: 0.3 });
-    const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    leftPillar.position.set(-halfW, pillarHeight / 2, 0);
-    group.add(leftPillar);
-
-    // Right pillar
-    const rightPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    rightPillar.position.set(halfW, pillarHeight / 2, 0);
-    group.add(rightPillar);
-
-    // Top bar
-    const barGeo = new THREE.CylinderGeometry(pillarRadius * 0.7, pillarRadius * 0.7, width, 8);
-    const barMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.0, roughness: 0.4, metalness: 0.3 });
-    const bar = new THREE.Mesh(barGeo, barMat);
-    bar.rotation.z = Math.PI / 2;
-    bar.position.set(0, pillarHeight, 0);
-    group.add(bar);
-
-    group.position.set(x, 0, z);
-    this.scene.add(group);
+    // Build the dynamic circuit track
+    buildCircuitMesh(this.scene);
   }
 
   // ── PROGRAMMATIC KART (FALLBACK) ──────────────────────────────────────
@@ -728,7 +544,10 @@ export class Renderer {
       // Vehicle state visual effects
       if (entity.type === 'VEHICLE') {
         const slotIndex = parseInt(entity.id.replace('P', ''), 10) || 0;
-        const baseColor = PLAYER_COLORS[slotIndex % PLAYER_COLORS.length];
+        let baseColor = PLAYER_COLORS[slotIndex % PLAYER_COLORS.length];
+        if (entity.modifiers && entity.modifiers.color_sync !== undefined) {
+          baseColor = entity.modifiers.color_sync;
+        }
 
         // Find the chassis mesh (first direct child mesh, or first child in group)
         const setKartColor = (color) => {

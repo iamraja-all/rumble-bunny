@@ -4,9 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>04-render-engine</title>
+    <title>Rumble-Bunny: Coastal Circuit</title>
   </head>
   <body>
+    <div id="touch-controls" style="display: none;">
+      <div class="touch-left-cluster">
+        <button id="touch-left" class="touch-btn">L</button>
+        <button id="touch-right" class="touch-btn">R</button>
+      </div>
+      <div class="touch-right-cluster">
+        <button id="touch-drift" class="touch-btn">DRIFT</button>
+        <button id="touch-brake" class="touch-btn">BRK</button>
+        <button id="touch-gas" class="touch-btn" style="transform: scale(1.2);">GAS</button>
+      </div>
+    </div>
     <canvas id="app"></canvas>
     <script type="module" src="/src/main.js"></script>
   </body>
