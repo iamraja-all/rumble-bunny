@@ -1,4 +1,4 @@
-import { createVehicleState, updateVehicle, launchVehicle } from './vehicle-physics.js';
+import { createVehicleState, updateVehicle, launchVehicle, applyCarCollisions, VEHICLE_RADIUS } from './vehicle-physics.js';
 
 /**
  * test_vehicle_physics_v1: Test runner for headless vehicle physics.
@@ -331,6 +331,66 @@ function runTests() {
       v.speed < peakSpeed,
       `T15: Friction slows vehicle when coasting (${v.speed.toFixed(2)} < ${peakSpeed.toFixed(2)})`
     );
+  })();
+
+  // ── Test 12: car-on-car collisions conserve momentum and respect weight ──
+  //
+  // WHY THIS EXISTS: applyCarCollisions used to assign BOTH karts avgSpeed * 0.5,
+  // which destroyed 75% of the pair's average speed on every frame of contact and
+  // ignored weight entirely, though spec.md:54 says weight "affects collision
+  // impulse transfer". A 1500kg kart at 40 m/s hitting a stationary 800kg one left
+  // both at 10 — the rammer punished, the victim handed free speed. Worse, in a
+  // three-way bot pileup the repeated halving ground everyone to a standstill; a
+  // 180-second simulation left 5 of 8 bots parked below 1 m/s.
+  (() => {
+    const heavy = createVehicleState('P0', { ...BALANCED_STATS, weight: 1500 });
+    const light = createVehicleState('P1', { ...BALANCED_STATS, weight: 800 });
+
+    // Head-on-to-rear: heavy is behind at 40 m/s, light is stationary just ahead.
+    // rotY = 0 means heading -Z, so "ahead" is a smaller z.
+    heavy.x = 0; heavy.z = 0; heavy.rotY = 0; heavy.speed = 40;
+    light.x = 0; light.z = -3; light.rotY = 0; light.speed = 0;
+
+    const pBefore = 1500 * 40 + 800 * 0;
+    applyCarCollisions([heavy, light]);
+    const pAfter = 1500 * heavy.speed + 800 * light.speed;
+
+    assert(Math.abs(pAfter - pBefore) < 1e-6,
+      `T12a: collision conserves momentum (${pBefore.toFixed(0)} -> ${pAfter.toFixed(0)})`);
+    assert(light.speed > heavy.speed,
+      `T12b: the lighter kart is knocked ahead of the heavier one (light=${light.speed.toFixed(1)}, heavy=${heavy.speed.toFixed(1)})`);
+    assert(heavy.speed > 15,
+      `T12c: the rammer is NOT punished down to a crawl (kept ${heavy.speed.toFixed(1)} of 40)`);
+    assert(heavy.speed >= 0 && light.speed >= 0, 'T12d: no kart is reversed by a shunt');
+
+    // Weight must actually matter — the same impact with equal masses must not
+    // produce the same split as the 1500-vs-800 case above.
+    const a = createVehicleState('P2', { ...BALANCED_STATS, weight: 1000 });
+    const b = createVehicleState('P3', { ...BALANCED_STATS, weight: 1000 });
+    a.x = 0; a.z = 0; a.rotY = 0; a.speed = 40;
+    b.x = 0; b.z = -3; b.rotY = 0; b.speed = 0;
+    applyCarCollisions([a, b]);
+    assert(Math.abs(a.speed - heavy.speed) > 0.5,
+      'T12e: weight changes the outcome (equal masses split differently from 1500 vs 800)');
+
+    // Contact distance must match the spec, not half of it.
+    assert(VEHICLE_RADIUS === 2.0, 'T12f: vehicle bounding radius is the spec.md value of 2.0');
+    const far1 = createVehicleState('P4', BALANCED_STATS);
+    const far2 = createVehicleState('P5', BALANCED_STATS);
+    far1.x = 0; far1.z = 0; far1.speed = 30; far1.rotY = 0;
+    far2.x = 0; far2.z = -3.5; far2.speed = 0; far2.rotY = 0;
+    applyCarCollisions([far1, far2]);
+    assert(far2.speed > 0,
+      'T12g: karts 3.5m apart DO collide (combined radius is 4.0, not the old 2.0)');
+
+    // Already separating: no further momentum exchange.
+    const s1 = createVehicleState('P6', BALANCED_STATS);
+    const s2 = createVehicleState('P7', BALANCED_STATS);
+    s1.x = 0; s1.z = 0; s1.rotY = Math.PI; s1.speed = 20;  // facing +Z, away from s2
+    s2.x = 0; s2.z = -3; s2.rotY = 0; s2.speed = 20;       // facing -Z, away from s1
+    applyCarCollisions([s1, s2]);
+    assert(s1.speed === 20 && s2.speed === 20,
+      'T12h: karts already moving apart do not keep trading speed');
   })();
 
   // ── RESULTS ─────────────────────────────────────────────────────────

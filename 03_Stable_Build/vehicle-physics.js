@@ -46,6 +46,11 @@ const DRIFT_SPEED_PENALTY = 0.995;
 // 1.5 seconds at 60fps = 90 frames of being unable to accelerate.
 const CRASH_RECOVERY_TIME = 1.5;
 
+// The bounding-sphere radius of a kart, per spec.md:95. Exported because
+// items-physics.js needs the same number for item collisions, and the two systems
+// had already drifted apart once — vehicle-vehicle contact was using half this.
+export const VEHICLE_RADIUS = 2.0;
+
 /**
  * createVehicleState — Factory for a new vehicle state object.
  *
@@ -192,6 +197,16 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
     // the Y axis is counter-clockwise (a Left turn). When the player inputs Right
     // (steer = +1), we need a clockwise rotation, so we *subtract* the steerRate.
     v.rotY -= steerRate;
+
+    // WHY wrap here and ONLY here: nothing used to bound rotY, so it accumulated
+    // without limit — a 180-second simulation measured |rotY| at 142 radians, about
+    // 23 full revolutions. That is not just untidy: bots.js normalises the angle
+    // difference with while-loops, so their iteration count grew with |rotY| and
+    // kept growing for the whole session, inside the 60Hz path (R07).
+    // The wrap is confined to the grounded branch on purpose — the AIRBORNE branch
+    // below measures stunt rotation as (current - takeoff), and wrapping mid-flight
+    // would corrupt that difference and miscount flips.
+    v.rotY = normalizeAngle(v.rotY);
   } else if (v.state === 'AIRBORNE') {
     // ── STUNT DETECTION (AIRBORNE ONLY) ─────────────────────────────
     // In air, steering input translates to stunt rotation (flips/spins)
@@ -332,7 +347,7 @@ function checkLanding(v) {
  * @param {number} angle - Angle in radians
  * @returns {number} - Equivalent angle in [-π, π]
  */
-function normalizeAngle(angle) {
+export function normalizeAngle(angle) {
   // WHY: Modular arithmetic approach instead of a while-loop.
   // A while-loop that subtracts 2π repeatedly would be O(n) where n is
   // the number of full rotations — forbidden inside a 60fps path.
@@ -377,45 +392,81 @@ export function launchVehicle(vehicle, upwardSpeed) {
  * and transferring some momentum to simulate a crash/bump.
  */
 export function applyCarCollisions(vehicles) {
-  const COLLISION_RADIUS = 2.0; // 4m diameter hitbox
-  const COLLISION_RADIUS_SQ = COLLISION_RADIUS * COLLISION_RADIUS;
-  
+  // spec.md:95 gives each vehicle a bounding radius of 2.0, so two karts make
+  // contact when their centres are 4.0 apart. The old constant used 2.0 as the
+  // COMBINED threshold — half the spec — so karts interpenetrated to 2m before
+  // reacting, while the comment on the same line claimed a third figure ("4m
+  // diameter"). Derived from the shared VEHICLE_RADIUS so the item collision in
+  // items-physics.js cannot drift away from it again.
+  const CONTACT_DIST = VEHICLE_RADIUS * 2;
+  const CONTACT_DIST_SQ = CONTACT_DIST * CONTACT_DIST;
+
+  // Bounciness. 0 = the two karts leave at a common speed, 1 = fully elastic.
+  const RESTITUTION = 0.3;
+
   for (let i = 0; i < vehicles.length; i++) {
     for (let j = i + 1; j < vehicles.length; j++) {
       const v1 = vehicles[i];
       const v2 = vehicles[j];
-      
+
       // Ignore if either is airborne
       if (v1.state === 'AIRBORNE' || v2.state === 'AIRBORNE') continue;
-      
+
       const dx = v2.x - v1.x;
       const dz = v2.z - v1.z;
       const distSq = dx * dx + dz * dz;
-      
-      if (distSq < COLLISION_RADIUS_SQ && distSq > 0.0001) {
-        // They are colliding!
+
+      if (distSq < CONTACT_DIST_SQ && distSq > 0.0001) {
         const dist = Math.sqrt(distSq);
-        const overlap = COLLISION_RADIUS - dist;
-        
+        const overlap = CONTACT_DIST - dist;
+
         // Normalize direction vector pointing from v1 to v2
         const nx = dx / dist;
         const nz = dz / dist;
-        
+
         // Push apart (resolve penetration)
         const pushAmount = overlap / 2;
         v1.x -= nx * pushAmount;
         v1.z -= nz * pushAmount;
-        
         v2.x += nx * pushAmount;
         v2.z += nz * pushAmount;
-        
-        // Momentum transfer (simple speed reduction and bump)
-        // A harsh crash reduces speed significantly.
-        const speedTransfer = 0.5; 
-        
-        const avgSpeed = (v1.speed + v2.speed) / 2;
-        v1.speed = avgSpeed * speedTransfer;
-        v2.speed = avgSpeed * speedTransfer;
+
+        // Only exchange momentum if they are actually closing on each other.
+        // WHY: without this, two karts still overlapping after the push kept
+        // trading speed every frame long after the impact was over, which is half
+        // of why a pileup never recovered.
+        const closing =
+          (-Math.sin(v1.rotY) * nx + -Math.cos(v1.rotY) * nz) * v1.speed -
+          (-Math.sin(v2.rotY) * nx + -Math.cos(v2.rotY) * nz) * v2.speed;
+        if (closing <= 0) continue;
+
+        // WHY THIS REPLACED `both = avgSpeed * 0.5`:
+        // The old line destroyed 75% of the pair's average speed on every frame of
+        // contact and ignored weight entirely, though spec.md:54 states weight
+        // "affects collision impulse transfer". Two consequences, both measured:
+        // a 1500kg kart at 40 m/s hitting a stationary 800kg one left BOTH at
+        // 10 m/s — the rammer punished, the victim handed free speed — and a
+        // three-way bot pileup ground itself to a standstill, which is why a
+        // 180-second simulation left 5 of 8 bots parked below 1 m/s.
+        //
+        // This is the standard 1D restitution pair, which conserves momentum
+        // (m1*s1 + m2*s2) exactly for any RESTITUTION. It is applied to the scalar
+        // speeds rather than to true velocity vectors, because this engine models
+        // a kart as a heading plus a scalar speed; that is a deliberate Rung 7
+        // approximation, accurate for the near-head-on and rear-end contacts that
+        // actually happen on a racing line, and much closer than what it replaces.
+        const m1 = (v1.stats && v1.stats.weight) || 1000;
+        const m2 = (v2.stats && v2.stats.weight) || 1000;
+        const total = m1 + m2;
+        const s1 = v1.speed;
+        const s2 = v2.speed;
+
+        v1.speed = ((m1 - RESTITUTION * m2) * s1 + (1 + RESTITUTION) * m2 * s2) / total;
+        v2.speed = ((m2 - RESTITUTION * m1) * s2 + (1 + RESTITUTION) * m1 * s1) / total;
+
+        // Karts do not get reversed by a shunt in this arcade model.
+        if (v1.speed < 0) v1.speed = 0;
+        if (v2.speed < 0) v2.speed = 0;
       }
     }
   }

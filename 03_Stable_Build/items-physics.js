@@ -7,7 +7,10 @@
  * for 60fps headless execution without spatial partitioning overhead (Rung 7).
  */
 
-const VEHICLE_RADIUS = 2.0;
+// One definition, imported — not a second copy. These two collision systems had
+// already drifted apart (vehicle-vehicle contact was using half this value).
+import { VEHICLE_RADIUS } from './vehicle-physics.js';
+
 const ITEM_RADIUS = 1.0;
 const COLLISION_DIST_SQ = (VEHICLE_RADIUS + ITEM_RADIUS) * (VEHICLE_RADIUS + ITEM_RADIUS);
 
