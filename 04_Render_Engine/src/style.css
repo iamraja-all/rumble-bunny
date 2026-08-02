@@ -94,7 +94,7 @@ body {
   background: transparent;
   border: 2px solid #00ccff;
   color: #00ccff;
-  font-family: 'Orbitron', sans-serif;
+  font-family: 'Bahnschrift', 'DIN Alternate', 'Franklin Gothic Medium', 'Segoe UI', Impact, 'Arial Narrow Bold', sans-serif;
   font-size: 1.2rem;
   font-weight: 700;
   padding: 15px 40px;
@@ -169,7 +169,7 @@ body {
   background: rgba(0, 204, 255, 0.1);
   border: 2px solid rgba(0, 204, 255, 0.5);
   color: rgba(255, 255, 255, 0.7);
-  font-family: 'Orbitron', sans-serif;
+  font-family: 'Bahnschrift', 'DIN Alternate', 'Franklin Gothic Medium', 'Segoe UI', Impact, 'Arial Narrow Bold', sans-serif;
   font-weight: bold;
   font-size: 1.2rem;
   backdrop-filter: blur(5px);

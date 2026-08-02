@@ -176,12 +176,34 @@ export class HUD {
       this._lastState = me.state;
     }
 
-    // Position (rank among all vehicles by Z — further negative Z = further ahead)
-    const vehicles = entities.filter(e => e.type === 'VEHICLE');
-    vehicles.sort((a, b) => a.z - b.z); // most negative Z first = P1
-    const rank = vehicles.findIndex(v => v.id === localPid) + 1;
-    const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
-    this.elPosition.textContent = `${rank}${suffix}`;
+    // Position.
+    //
+    // TWO BUGS FIXED HERE (2026-08-02). This used to sort EVERY entity of type
+    // VEHICLE by raw Z:
+    //   1. Traffic obstacles serialize as Type=VEHICLE too, so three cones were
+    //      counted as racers — which is why an 8-player race reported "9th".
+    //   2. Ranking by Z alone is meaningless on a closed circuit. The moment a kart
+    //      completes a lap its Z resets toward the start line, so the leader was
+    //      reported last while a kart a full lap down was reported first.
+    // Racers are the P<n> ids the lobby hands out; traffic uses T<n>. Rank is now
+    // laps first, then progress through the circuit's gates, then Z as a tiebreak
+    // within the current sector.
+    const racers = entities.filter(e => e.type === 'VEHICLE' && /^P\d+$/.test(e.id));
+    racers.sort((a, b) => {
+      const lapDiff = (b.modifiers?.lap || 0) - (a.modifiers?.lap || 0);
+      if (lapDiff !== 0) return lapDiff;
+      const cpDiff = (b.modifiers?.checkpoint || 0) - (a.modifiers?.checkpoint || 0);
+      if (cpDiff !== 0) return cpDiff;
+      return a.z - b.z;
+    });
+    const rank = racers.findIndex(v => v.id === localPid) + 1;
+    // 11th/12th/13th take "th", not "st/nd/rd" — irrelevant at 8 players today, but
+    // the lobby cap is the kind of thing that changes.
+    const tens = rank % 100;
+    const suffix = tens >= 11 && tens <= 13 ? 'th'
+      : rank % 10 === 1 ? 'st' : rank % 10 === 2 ? 'nd' : rank % 10 === 3 ? 'rd' : 'th';
+    this.elPosition.textContent = rank > 0 ? `${rank}${suffix}` : '--';
+    if (this.elPositionTotal) this.elPositionTotal.textContent = `/ ${racers.length}`;
 
     // Lap counter
     const lap = me.modifiers?.lap || 0;
@@ -211,14 +233,23 @@ export class HUD {
   injectStyles() {
     const style = document.createElement('style');
     style.textContent = `
-      @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap');
+      /* WHY THE GOOGLE FONTS IMPORT IS GONE:
+         it fetched Orbitron from fonts.googleapis.com at runtime. idea.md:15
+         promises play over a mobile hotspot / local Wi-Fi and idea.md:11 promises
+         Docker-hosted dedicated servers — in both of those the request cannot
+         resolve, the font never arrives, and the HUD renders in whatever the
+         fallback is. Caught live: a race screenshot showed the speed and stunt
+         readouts as tofu boxes instead of digits, because the glyphs never loaded.
+         A racing HUD whose numbers can vanish depending on the network is not a
+         HUD. This stack is all locally installed faces, so it always resolves and
+         costs zero requests. */
 
       #hud {
         position: fixed;
         top: 0; left: 0; right: 0; bottom: 0;
         pointer-events: none;
         z-index: 100;
-        font-family: 'Orbitron', monospace, sans-serif;
+        font-family: 'Bahnschrift', 'DIN Alternate', 'Franklin Gothic Medium', 'Segoe UI', Impact, 'Arial Narrow Bold', sans-serif;
         color: #fff;
       }
 

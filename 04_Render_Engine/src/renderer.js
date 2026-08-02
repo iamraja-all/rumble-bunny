@@ -41,7 +41,11 @@ export class Renderer {
     // (setupSkyAndEnvironment) fills the backdrop and doubles as the light
     // source for image-based lighting. Fog is a light daytime haze pushed far
     // out so it grounds distant geometry without washing over the sky.
-    this.scene.fog = new THREE.Fog(0xbcd4e6, 180, 600);
+    // WHY PUSHED OUT FROM 180/600: with the chase camera now sitting low and close
+    // (see updateState), haze starting at 180 units washed over the mid-ground and
+    // the whole frame read as milky. Starting it further out keeps distant geometry
+    // grounded without fogging the part of the track the player is actually driving.
+    this.scene.fog = new THREE.Fog(0xaec9de, 300, 1100);
 
     this.camera = new THREE.PerspectiveCamera(
       65,
@@ -243,7 +247,13 @@ export class Renderer {
 
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.3,  // strength — subtle glow, was 0.55 (blew out the whole scene)
+      // WHY 0.15 and not 0.3: with the chase camera now low and close to the
+      // horizon, driving TOWARD the Sky's sun put the sun disc itself through the
+      // bloom pass and washed the whole frame white — verified by screenshot at
+      // two different points on the circuit. Halving the strength keeps the glow
+      // on genuinely emissive things (gates, taillights, boost) without the sun
+      // taking over whenever the track turns west.
+      0.15, // strength — was 0.3, and 0.55 before that (blew out the whole scene)
       0.3,  // radius
       0.9   // threshold — only the brightest emissive/neon pixels bloom
     );
@@ -286,123 +296,114 @@ export class Renderer {
 
   // ── PROGRAMMATIC KART (FALLBACK) ──────────────────────────────────────
   createProceduralKart(color) {
+    // Shared part cache — built once per renderer, reused by every kart.
+    //
+    // WHY: the previous builder allocated roughly 19 meshes, 14 geometries AND 14
+    // materials PER CAR, none shared. At 11 karts that is ~209 draw calls plus a
+    // shadow pass over every one, which is why swapping to "low poly" only reached
+    // 46fps instead of the 60 ADR-0006 projected — the cost had moved from triangle
+    // count to draw-call count. Geometry and every non-painted material are now
+    // shared; only the paint is per-car, because each player picks their own colour.
+    const P = this._kartParts || (this._kartParts = {
+      body:     new THREE.BoxGeometry(2.00, 0.55, 4.00),
+      hood:     new THREE.BoxGeometry(1.86, 0.20, 1.55),
+      cabin:    new THREE.BoxGeometry(1.64, 0.62, 1.60),
+      roof:     new THREE.BoxGeometry(1.58, 0.14, 1.35),
+      scoop:    new THREE.BoxGeometry(0.72, 0.24, 0.85),
+      wing:     new THREE.BoxGeometry(2.08, 0.11, 0.46),
+      strut:    new THREE.BoxGeometry(0.13, 0.44, 0.13),
+      bumper:   new THREE.BoxGeometry(2.06, 0.30, 0.34),
+      sill:     new THREE.BoxGeometry(0.16, 0.22, 2.40),
+      wheelF:   new THREE.CylinderGeometry(0.46, 0.46, 0.36, 14),
+      wheelR:   new THREE.CylinderGeometry(0.58, 0.58, 0.54, 14),
+      hub:      new THREE.CylinderGeometry(0.21, 0.21, 0.40, 10),
+      exhaust:  new THREE.CylinderGeometry(0.11, 0.11, 0.46, 8),
+      lamp:     new THREE.BoxGeometry(0.38, 0.18, 0.10),
+      tyre:   new THREE.MeshStandardMaterial({ color: 0x131313, roughness: 0.95, metalness: 0.0 }),
+      // WHY metalness 0.7 rather than 1.0: a pure mirror under the Sky IBL pushes
+      // every bumper, hub and exhaust tip past the bloom threshold, and with the
+      // camera now sitting close behind the car the whole frame whites out. ADR-0005
+      // already lost this exact fight once at exposure 0.85.
+      chrome: new THREE.MeshStandardMaterial({ color: 0xb6babe, metalness: 0.7, roughness: 0.42 }),
+      glass:  new THREE.MeshStandardMaterial({ color: 0x0b1119, metalness: 0.5, roughness: 0.12 }),
+      dark:   new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.55, metalness: 0.45 }),
+      // Emissive stays low deliberately: the bloom pass runs at threshold 0.9 with
+      // strength 0.3, so anything much above ~0.4 here floods the frame rather than
+      // glowing. Lamps this close to the camera are the worst offenders.
+      head:   new THREE.MeshStandardMaterial({ color: 0xfff7d0, emissive: 0xffefb0, emissiveIntensity: 0.30 }),
+      tail:   new THREE.MeshStandardMaterial({ color: 0xff2a10, emissive: 0xff1400, emissiveIntensity: 0.40 }),
+    });
+
     const group = new THREE.Group();
 
-    // ─ Chassis ─
-    const chassisGeo = new THREE.BoxGeometry(2.0, 0.6, 3.5);
-    const chassisMat = new THREE.MeshPhongMaterial({
-      color,
-      specular: 0x444444,
-      shininess: 60,
-    });
-    const chassis = new THREE.Mesh(chassisGeo, chassisMat);
-    chassis.position.y = 0.5;
-    chassis.castShadow = true;
-    chassis.receiveShadow = true;
-    group.add(chassis);
+    // Paint is the one per-instance material: each player picks a colour.
+    const paint = new THREE.MeshStandardMaterial({ color, metalness: 0.45, roughness: 0.32 });
 
-    // PERF: removed the per-kart RectAreaLight underglow — real-time area lights
-    // are expensive and 11 of them recreate the same framerate problem as the
-    // spotlights. (A cheap emissive strip could fake underglow later if wanted.)
+    // Body panels are tagged so recolouring can find them by intent rather than by
+    // child index. The old setKartColor reached for children[0] and children[2] and
+    // would silently repaint a wheel the moment the build order changed.
+    const add = (geo, mat, x, y, z, isBody = false) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      if (isBody) m.userData.isBody = true;
+      group.add(m);
+      return m;
+    };
 
-    // ─ Front Bumper ─
-    const bumperGeo = new THREE.CylinderGeometry(0.3, 0.3, 2.2, 8);
-    const bumperMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
-    const bumper = new THREE.Mesh(bumperGeo, bumperMat);
-    bumper.rotation.z = Math.PI / 2;
-    bumper.position.set(0, 0.4, -1.8);
-    bumper.castShadow = true;
-    group.add(bumper);
+    // Forward is -Z (Right-Handed, Y-Up, per spec.md section 1), so the nose is
+    // at negative Z and the tail at positive Z.
 
-    // ─ Cockpit (rounded top) ─
-    const cockpitGeo = new THREE.BoxGeometry(1.4, 0.5, 1.6);
-    const cockpitMat = new THREE.MeshPhongMaterial({
-      color: 0x222222,
-      specular: 0x111111,
-      shininess: 80,
-    });
-    const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
-    cockpit.position.set(0, 1.05, -0.2);
-    cockpit.castShadow = true;
-    cockpit.receiveShadow = true;
-    group.add(cockpit);
+    // Long, low, wide slab — the muscle-car proportion. Everything else hangs off it.
+    add(P.body, paint, 0, 0.62, 0, true);
+    add(P.hood, paint, 0, 0.92, -1.28, true);
+    add(P.scoop, P.dark, 0, 1.12, -1.22);
 
-    // ─ Spoiler ─
-    const spoilerGeo = new THREE.BoxGeometry(2.2, 0.1, 0.4);
-    const spoilerMat = new THREE.MeshPhongMaterial({ color });
-    const spoiler = new THREE.Mesh(spoilerGeo, spoilerMat);
-    spoiler.position.set(0, 1.2, 1.5);
-    spoiler.castShadow = true;
-    spoiler.receiveShadow = true;
-    group.add(spoiler);
+    // Greenhouse sits BACK on the body. A cabin pushed forward reads as a van; set
+    // back behind the midpoint it reads as a muscle car with a long bonnet.
+    add(P.cabin, P.glass, 0, 1.18, 0.42);
+    add(P.roof, paint, 0, 1.54, 0.48, true);
 
-    // Spoiler pylons
-    for (const side of [-0.8, 0.8]) {
-      const pylonGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
-      const pylonMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
-      const pylon = new THREE.Mesh(pylonGeo, pylonMat);
-      pylon.position.set(side, 0.95, 1.5);
-      group.add(pylon);
-    }
+    // Rear wing on two struts.
+    add(P.strut, P.dark, -0.72, 1.02, 1.82);
+    add(P.strut, P.dark, 0.72, 1.02, 1.82);
+    add(P.wing, paint, 0, 1.28, 1.82, true);
 
-    // ─ Wheels (4x) ─
-    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
-    const wheelMat = new THREE.MeshPhongMaterial({
-      color: 0x111111,
-      specular: 0x333333,
-      shininess: 30,
-    });
+    // Bumpers and side sills.
+    add(P.bumper, P.chrome, 0, 0.52, -2.02);
+    add(P.bumper, P.chrome, 0, 0.52, 2.02);
+    add(P.sill, P.dark, -1.02, 0.45, 0.1);
+    add(P.sill, P.dark, 1.02, 0.45, 0.1);
 
-    const wheelPositions = [
-      { x: -1.1, y: 0.4, z: -1.2 }, // front-left
-      { x: 1.1, y: 0.4, z: -1.2 },  // front-right
-      { x: -1.1, y: 0.4, z: 1.2 },  // rear-left
-      { x: 1.1, y: 0.4, z: 1.2 },   // rear-right
-    ];
+    // Lights.
+    add(P.lamp, P.head, -0.62, 0.78, -2.02);
+    add(P.lamp, P.head, 0.62, 0.78, -2.02);
+    add(P.lamp, P.tail, -0.62, 0.78, 2.04);
+    add(P.lamp, P.tail, 0.62, 0.78, 2.04);
 
-    for (const pos of wheelPositions) {
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.rotation.z = Math.PI / 2; // Rotate so cylinder axis is along X
-      wheel.position.set(pos.x, pos.y, pos.z);
-      wheel.castShadow = true;
-      wheel.receiveShadow = true;
-      group.add(wheel);
+    // Twin exhaust tips.
+    const e1 = add(P.exhaust, P.chrome, -0.42, 0.34, 2.16);
+    const e2 = add(P.exhaust, P.chrome, 0.42, 0.34, 2.16);
+    e1.rotation.x = Math.PI / 2;
+    e2.rotation.x = Math.PI / 2;
 
-      // Hub cap
-      const hubGeo = new THREE.CircleGeometry(0.25, 8);
-      const hubMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
-      const hub = new THREE.Mesh(hubGeo, hubMat);
-      hub.rotation.y = pos.x > 0 ? Math.PI / 2 : -Math.PI / 2;
-      hub.position.set(
-        pos.x + (pos.x > 0 ? 0.16 : -0.16),
-        pos.y,
-        pos.z
-      );
-      group.add(hub);
-    }
-
-    // ─ Exhaust pipes ─
-    for (const side of [-0.5, 0.5]) {
-      const exGeo = new THREE.CylinderGeometry(0.12, 0.15, 0.6, 8);
-      const exMat = new THREE.MeshPhongMaterial({
-        color: 0x666666,
-        specular: 0x999999,
-        shininess: 100,
-      });
-      const exhaust = new THREE.Mesh(exGeo, exMat);
-      exhaust.rotation.x = Math.PI / 2;
-      exhaust.position.set(side, 0.5, 2.0);
-      group.add(exhaust);
-    }
-
-    // ─ Headlights ─
-    for (const side of [-0.6, 0.6]) {
-      const lightGeo = new THREE.SphereGeometry(0.15, 8, 8);
-      const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
-      const headlight = new THREE.Mesh(lightGeo, lightMat);
-      headlight.position.set(side, 0.7, -1.8);
-      group.add(headlight);
-    }
+    // Wheels. Fat rears, narrower fronts — the single cheapest cue that says
+    // "muscle car" rather than "go-kart".
+    const wheel = (geo, x, z, r) => {
+      const w = new THREE.Mesh(geo, P.tyre);
+      w.position.set(x, r, z);
+      w.rotation.z = Math.PI / 2;
+      w.castShadow = true;
+      group.add(w);
+      const h = new THREE.Mesh(P.hub, P.chrome);
+      h.position.set(x, r, z);
+      h.rotation.z = Math.PI / 2;
+      group.add(h);
+    };
+    wheel(P.wheelF, -1.02, -1.32, 0.46);
+    wheel(P.wheelF, 1.02, -1.32, 0.46);
+    wheel(P.wheelR, -1.05, 1.36, 0.58);
+    wheel(P.wheelR, 1.05, 1.36, 0.58);
 
     return group;
   }
@@ -550,17 +551,18 @@ export class Renderer {
         }
 
         // Find the chassis mesh (first direct child mesh, or first child in group)
+        // WHY BY TAG AND NOT BY INDEX: this used to repaint mesh.children[0] and
+        // mesh.children[2], which only worked while the kart happened to be built
+        // chassis-first and spoiler-third. The muscle-car build order is different,
+        // so index 2 is now a bonnet scoop — and a positional lookup would happily
+        // paint a wheel. createProceduralKart tags every painted panel with
+        // userData.isBody, so recolouring follows intent instead of build order.
         const setKartColor = (color) => {
           if (mesh.isGroup) {
-            // Color the chassis (first child)
-            const chassis = mesh.children[0];
-            if (chassis && chassis.isMesh) {
-              chassis.material.color.setHex(color);
-            }
-            // Also color the spoiler (third child)
-            const spoiler = mesh.children[2];
-            if (spoiler && spoiler.isMesh) {
-              spoiler.material.color.setHex(color);
+            for (const child of mesh.children) {
+              if (child.isMesh && child.userData.isBody) {
+                child.material.color.setHex(color);
+              }
             }
           } else if (mesh.isMesh) {
             mesh.material.color.setHex(color);
@@ -634,19 +636,40 @@ export class Renderer {
 
       // Camera Follow for local player — smooth lerp
       if (entity.id === localPid) {
-        const camOffset = new THREE.Vector3(0, 10, 18);
+        // WHY THE CAMERA CAME DOWN AND IN (2026-08-02):
+        // it sat at (0, 10, 18) — ten metres up and eighteen back — which reads as
+        // a strategy-game overhead view and flattens all sense of speed. Arcade
+        // racers of the Rumble Racing era sit low and close, just behind the
+        // bumper, so the road rushes past the bottom of the frame. Dropping to
+        // 3.4m up / 8.5m back roughly triples the apparent velocity at the same
+        // actual m/s, for free.
+        const speedT = Math.min(Math.abs(entity.speed) / 40, 1);
+
+        // Speed pullback: the camera eases back and lowers slightly as the kart
+        // gains pace, which is the classic trick for making fast feel fast.
+        const camOffset = new THREE.Vector3(0, 3.4 - speedT * 0.5, 8.5 + speedT * 2.2);
         camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
         const targetCamPos = mesh.position.clone().add(camOffset);
-        this._camPos.lerp(targetCamPos, 0.1);
+        // Snappier follow than 0.1 — a loose camera at this distance feels drunk.
+        this._camPos.lerp(targetCamPos, 0.18);
 
-        // Look slightly ahead of the car to see ramps
-        const lookOffset = new THREE.Vector3(0, 0, -10);
+        // Aim at head height a little ahead of the car so ramps and the next gate
+        // stay in frame rather than sitting off the top edge.
+        const lookOffset = new THREE.Vector3(0, 1.6, -12);
         lookOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
         const lookTarget = mesh.position.clone().add(lookOffset);
-        
-        this._camTarget.lerp(lookTarget, 0.1);
+
+        this._camTarget.lerp(lookTarget, 0.18);
         this.camera.position.copy(this._camPos);
         this.camera.lookAt(this._camTarget);
+
+        // Widen the lens with speed. A rising FOV at pace is the cheapest and most
+        // effective speed cue there is.
+        const targetFov = 62 + speedT * 12;
+        if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+          this.camera.fov += (targetFov - this.camera.fov) * 0.08;
+          this.camera.updateProjectionMatrix();
+        }
       }
     }
 

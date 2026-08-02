@@ -36,10 +36,19 @@ export function buildCircuitMesh(scene) {
   drawRoad(CIRCUIT_DEF.road.shortcutPoints, CIRCUIT_DEF.road.shortcutWidth, 0x3a2a2a); // Dirt path look
 
   // Gates (Checkpoints)
+  //
+  // TWO BUGS FIXED HERE (2026-08-02): this tested `gate.id === 'G0'`, but no gate
+  // has that id — the finish gate is 'finish' (circuit-track.js), so the finish was
+  // never distinguished. And it passed `gate.width`, which does not exist: gates
+  // carry `halfWidth`. That made `width` undefined, so halfW was NaN and every
+  // pillar and bar of all nine gates got NaN geometry — the entire checkpoint
+  // structure of the circuit rendered as nothing. Confirmed by screenshot: no
+  // arches anywhere on the track.
   for (const gate of CIRCUIT_DEF.gates) {
-    const isFinish = gate.id === 'G0';
-    const gateColor = isFinish ? 0xffffff : 0x00ccff;
-    createCheckpointGate(scene, gate.center.x, gate.center.z, gate.width, gateColor, gate.normal);
+    const isFinish = gate.id === 'finish';
+    const isShortcut = gate.id.startsWith('shortcut');
+    const gateColor = isFinish ? 0xffdd33 : isShortcut ? 0xff7722 : 0x33ddff;
+    createCheckpointGate(scene, gate.center.x, gate.center.z, gate.halfWidth * 2, gateColor, gate.normal, isFinish);
   }
 
   // Ramps
@@ -82,14 +91,14 @@ function createSpawnerPad(scene, x, z) {
   scene.add(ring);
 }
 
-function createCheckpointGate(scene, x, z, width, color, normal) {
+function createCheckpointGate(scene, x, z, width, color, normal, isFinish = false) {
   const group = new THREE.Group();
-  const pillarHeight = 8;
+  const pillarHeight = isFinish ? 11 : 8;
   const pillarRadius = 0.4;
   const halfW = width / 2;
 
   const pillarGeo = new THREE.CylinderGeometry(pillarRadius, pillarRadius, pillarHeight, 8);
-  const pillarMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.0, roughness: 0.4, metalness: 0.3 });
+  const pillarMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.45, roughness: 0.5, metalness: 0.2 });
   
   const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
   leftPillar.position.set(-halfW, pillarHeight / 2, 0);
@@ -100,19 +109,56 @@ function createCheckpointGate(scene, x, z, width, color, normal) {
   group.add(rightPillar);
 
   const barGeo = new THREE.CylinderGeometry(pillarRadius * 0.7, pillarRadius * 0.7, width, 8);
-  const barMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.0, roughness: 0.4, metalness: 0.3 });
+  const barMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.45, roughness: 0.5, metalness: 0.2 });
   const bar = new THREE.Mesh(barGeo, barMat);
   bar.rotation.z = Math.PI / 2;
   bar.position.set(0, pillarHeight, 0);
   group.add(bar);
 
+  // The start/finish line gets a chequered banner slung between the pillars —
+  // the single most recognisable piece of furniture on an arcade circuit, and the
+  // thing that tells a player at a glance where a lap begins.
+  if (isFinish) {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    const sq = 32;
+    for (let ix = 0; ix < c.width / sq; ix++) {
+      for (let iy = 0; iy < c.height / sq; iy++) {
+        // WHY NOT PURE WHITE: #ffffff under the directional sun lands well above
+        // the bloom threshold of 0.9, and the finish gate sits about 9m in front of
+        // the starting grid — so a pure-white chequer filled the entire opening
+        // shot with glare. Mid-grey still reads as chequered flag and stays under
+        // the threshold.
+        g.fillStyle = (ix + iy) % 2 === 0 ? '#b9b9b9' : '#141414';
+        g.fillRect(ix * sq, iy * sq, sq, sq);
+      }
+    }
+    const bannerTex = new THREE.CanvasTexture(c);
+    const banner = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, 3),
+      new THREE.MeshStandardMaterial({ map: bannerTex, side: THREE.DoubleSide, roughness: 0.9 })
+    );
+    banner.position.set(0, pillarHeight - 2.2, 0);
+    group.add(banner);
+
+    // And a chequered strip painted across the tarmac itself.
+    const road = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, 4),
+      new THREE.MeshStandardMaterial({ map: bannerTex, roughness: 0.8 })
+    );
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(0, 0.16, 0);
+    group.add(road);
+  }
+
   group.position.set(x, 0, z);
-  
+
   // Align with gate normal (normal points forward through the gate)
   if (normal) {
     const angle = Math.atan2(normal.x, normal.z);
     group.rotation.y = angle;
   }
-  
+
   scene.add(group);
 }
