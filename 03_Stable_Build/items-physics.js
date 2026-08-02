@@ -14,7 +14,12 @@ import { VEHICLE_RADIUS } from './vehicle-physics.js';
 const ITEM_RADIUS = 1.0;
 const COLLISION_DIST_SQ = (VEHICLE_RADIUS + ITEM_RADIUS) * (VEHICLE_RADIUS + ITEM_RADIUS);
 
-export function createItemState(id, type, x, y, z, rotY, speed) {
+// WHY the defaults: track.js calls this with just (id, type) and then assigns x/y/z
+// itself, which left rotY and speed as `undefined`. Those reached the serializer as
+// NaN on every spawned item — invisible, because the non-finite guard wrote them out
+// as 0. Static items do not care, but shipping NaN through the wire format is how
+// the far worse stat-block bug stayed hidden, so it gets fixed at the source.
+export function createItemState(id, type, x = 0, y = 0, z = 0, rotY = 0, speed = 0) {
   return {
     id,
     type,

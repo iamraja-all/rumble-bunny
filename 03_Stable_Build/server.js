@@ -1,4 +1,4 @@
-import { getLaunchPadAt, updateSpawners } from './track.js';
+import { getLaunchPadAt, updateSpawners, createTrackState } from './track.js';
 import { serializeLedger } from './ledger.js';
 import { WebSocketServer } from 'ws';
 import { Lobby } from './lobby.js';
@@ -105,10 +105,15 @@ wss.on('connection', (ws) => {
         // rather than relying on parseInt downstream to coerce the danger away.
         const color = safeHexColor(parts[1]);
 
-        const room = roomManager.createRoom(Lobby, RaceManager);
+        const room = roomManager.createRoom(Lobby, RaceManager, BALANCED_STATS);
 
         // Spawn traffic immediately so it's there
         room.trafficList = createTrafficVehicles(BALANCED_STATS);
+
+        // Private item-spawn timers for this room. Previously every room mutated
+        // one shared object on TRACK_DEF, so a pickup in one race silently re-timed
+        // the spawners in every other race running in the same process.
+        room.trackState = createTrackState();
 
         const joinRes = roomManager.joinRoom(room.code, clientId);
         if (joinRes) {
@@ -198,7 +203,10 @@ wss.on('connection', (ws) => {
 setInterval(() => {
   for (const [code, room] of roomManager.rooms.entries()) {
     // 0. Update Spawners
-    const newItems = updateSpawners(DT, room.activeItems);
+    // Defensive lazy init rather than letting updateSpawners throw: this runs inside
+    // the 60Hz loop, and a throw here would kill the tick for every room at once.
+    if (!room.trackState) room.trackState = createTrackState();
+    const newItems = updateSpawners(DT, room.activeItems, room.trackState);
     if (newItems.length > 0) {
       room.activeItems.push(...newItems);
     }

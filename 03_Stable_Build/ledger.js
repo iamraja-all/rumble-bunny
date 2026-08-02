@@ -92,6 +92,9 @@ export function parseLedger(ledgerString) {
  * 
  * Big-O Complexity: O(N * M) where N is the number of entities and M is the number of modifiers per entity.
  */
+// Fires at most once per process; see formatFloat inside serializeLedger.
+let warnedNonFinite = false;
+
 export function serializeLedger(entities) {
   if (!Array.isArray(entities)) {
     return '';
@@ -111,7 +114,26 @@ export function serializeLedger(entities) {
   // rejects non-finite input at the trust boundary so this can never trigger.
   const formatFloat = (num) => {
     const n = Number(num);
-    return (Number.isFinite(n) ? n : 0).toFixed(3).replace(/\.?0+$/, '');
+    if (!Number.isFinite(n)) {
+      // WHY THIS WARNS: quarantine.js stops non-finite values arriving from the
+      // NETWORK, but nothing stops them arising from corrupt INTERNAL state — and
+      // that happened. RoomManager was constructing Lobby without a stat block, so
+      // every kart in every room produced NaN from the physics and this guard
+      // rendered the entire field as parked at (0, 0, 0). It looked like data, so
+      // it went unnoticed. Silently writing 0 is still the right wire behaviour;
+      // doing it without a word was the mistake.
+      // R07: guarded to fire ONCE, so a 60Hz loop cannot be turned into a log flood.
+      if (!warnedNonFinite) {
+        warnedNonFinite = true;
+        console.error(
+          '[ledger] a non-finite value reached serialization and was written as 0. ' +
+          'Internal state is corrupt — check that vehicles were built with a stat block. ' +
+          'This warns once per process.'
+        );
+      }
+      return '0';
+    }
+    return n.toFixed(3).replace(/\.?0+$/, '');
   };
 
   // Loop Complexity: O(N) where N is the number of entities

@@ -15,13 +15,24 @@ export class RoomManager {
     return code;
   }
 
-  createRoom(LobbyClass, RaceManagerClass) {
+  /**
+   * @param baseStats the vehicle stat block every kart in this room is built from.
+   *
+   * WHY THIS PARAMETER EXISTS NOW: it was missing, and `new LobbyClass(code)` left
+   * Lobby's `baseStats` undefined. Every vehicle in every room was therefore created
+   * with an empty stat block, so updateVehicle read undefined for max_speed and
+   * acceleration, produced NaN, and the ledger's non-finite guard rendered the whole
+   * field as parked at (0, 0, 0). Nothing in a real room could move. The unit tests
+   * never saw it because they construct `new Lobby(name, STATS)` directly — it took
+   * the end-to-end socket test to surface it.
+   */
+  createRoom(LobbyClass, RaceManagerClass, baseStats) {
     let code;
     do {
       code = this._generateCode();
     } while (this.rooms.has(code));
 
-    const lobby = new LobbyClass(code);
+    const lobby = new LobbyClass(code, baseStats);
     const raceManager = new RaceManagerClass();
 
     const room = {
