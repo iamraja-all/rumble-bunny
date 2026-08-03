@@ -122,7 +122,13 @@ export class Renderer {
     // (the "hang"). 1.0 keeps it smooth; the canvas is still crisp at this size.
     this.renderer.setPixelRatio(1);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // WHY PCFShadowMap AND NOT PCFSoft: three deprecated PCFSoftShadowMap in this
+    // version and already silently substitutes PCFShadowMap for it — the only thing
+    // the old constant bought was a console warning on every single page load, which
+    // is exactly the noise that made the freeze hunt harder to read. Naming what we
+    // actually get also removes the cheaper-shadow A/B that ADR-0006 left open: the
+    // renderer has been running PCF, not PCFSoft, since the day three deprecated it.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // WHY: ACES filmic tone mapping maps the wide dynamic range of a real sky
     // + IBL into displayable colour the way film does — this is the single
     // biggest step from "flat game look" to "real". Exposure trims overall

@@ -13,6 +13,9 @@ export class ParticleSystem {
   constructor(scene, maxParticles = 2000) {
     this.maxParticles = maxParticles;
     this.particleIndex = 0;
+    // How many slots currently hold a living particle. Kept so update() can tell an
+    // idle system from a busy one in one integer compare — see the WHY in update().
+    this.liveCount = 0;
 
     // Use a simple box geometry for a low-poly/voxel aesthetic
     const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
@@ -65,7 +68,13 @@ export class ParticleSystem {
    */
   emit(options) {
     const p = this.particles[this.particleIndex];
-    
+
+    // Read the OLD life before overwriting it: claiming a dead slot adds a living
+    // particle, but the ring buffer wrapping onto a still-living one just replaces
+    // it, so the count must not move. Getting this backwards would drift liveCount
+    // upward forever and permanently defeat the idle skip in update().
+    if (p.life <= 0) this.liveCount++;
+
     p.life = options.life || 1.0;
     p.maxLife = p.life;
     
@@ -89,6 +98,22 @@ export class ParticleSystem {
    * Update particle positions and scales based on life.
    */
   update(dt) {
+    // WHY THIS EARLY OUT EXISTS (R07):
+    // this loop used to walk every one of maxParticles slots on every frame and, if
+    // even ONE particle was alive, flag the whole instanceMatrix for re-upload.
+    // Across both systems that is 3000 instances x 16 floats x 4 bytes = ~192 KB
+    // pushed to the GPU every frame, ~11 MB/s, for the entire race. But smoke only
+    // exists while a kart is DRIFTing and flames only while BOOSTING, so the common
+    // case is nothing alive at all — paying full price for an empty system. A live
+    // count turns those frames into one integer compare, and hiding the mesh drops
+    // its draw call and frustum test too. The audit flagged this cost; measuring the
+    // freeze is what finally made it worth fixing.
+    if (this.liveCount === 0) {
+      if (this.mesh.visible) this.mesh.visible = false;
+      return;
+    }
+    this.mesh.visible = true;
+
     let needsUpdate = false;
 
     for (let i = 0; i < this.maxParticles; i++) {
@@ -96,8 +121,9 @@ export class ParticleSystem {
       if (p.life > 0) {
         // Decrease life
         p.life -= dt;
-        
+
         if (p.life <= 0) {
+          this.liveCount--;
           // Die -> scale to 0
           this._dummy.scale.set(0, 0, 0);
           this._dummy.updateMatrix();

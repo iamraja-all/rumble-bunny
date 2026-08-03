@@ -5,12 +5,18 @@ import { HUD } from './hud.js';
 import { SoundEngine } from './audio.js';
 import { Minimap } from './minimap.js';
 import { MainMenu } from './menu.js';
+import { startProbe } from './debug-probe.js';
 
 // Get canvas
 const canvas = document.querySelector('#app');
 
 // Initialize WebGL Renderer
 const renderer = new Renderer(canvas);
+
+// GPU/JS resource sampler for the P3f freeze hunt. No-op unless the URL has
+// ?debug — see debug-probe.js for why the samples are persisted rather than
+// held on window.
+const probeTick = startProbe(renderer);
 
 // Initialize Audio Engine
 const audio = new SoundEngine();
@@ -79,6 +85,7 @@ window.addEventListener('error', (e) => {
 // 60fps Animation Loop
 function animate() {
   requestAnimationFrame(animate);
+  probeTick();
 
   const now = performance.now();
   const dt = (now - lastTime) / 1000.0;
