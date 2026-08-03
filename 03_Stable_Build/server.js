@@ -9,21 +9,23 @@ import { BotController } from './bots.js';
 import { createTrafficVehicles, updateTrafficVehicle, advanceTrafficProgress } from './traffic.js';
 import { RoomManager } from './room-manager.js';
 import { finiteClamp, safeHexColor } from './quarantine.js';
-import express from 'express';
-import { createServer } from 'http';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createServer } from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createStaticHandler } from './static-files.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-// Serve the built static files from the /public directory (which Docker will populate)
-// In local dev, this directory might not exist if they use Vite dev server, but in prod it will.
+// Serve the built static files from /public (which Docker populates). In local dev
+// that directory does not exist — Vite serves the client on :5173 — and the handler
+// simply 404s every asset, which is what express.static did too.
+//
+// WHY NOT express ANY MORE (R06): it was here for this one mount while `node:http`
+// was already imported. static-files.js does it with a boot-time whitelist, so no
+// request string is ever turned into a filesystem path. See that file's header.
 const staticPath = path.join(__dirname, '..', 'public');
-app.use(express.static(staticPath));
-
-const server = createServer(app);
+const server = createServer(createStaticHandler(staticPath));
 
 const PORT = process.env.PORT || 8080;
 const TICK_RATE = 60;

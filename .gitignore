@@ -1,3 +1,10 @@
 node_modules/
 .superpowers/
 .worktrees/
+
+# Build output. `public/` is what 04_Render_Engine/dist becomes when the server
+# serves the client itself (Docker COPYs it there, and static-files.js indexes it).
+# Generated, never edited, and committing it would put a minified copy of the whole
+# client in every diff.
+dist/
+public/
