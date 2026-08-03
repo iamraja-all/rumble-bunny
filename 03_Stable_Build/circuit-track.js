@@ -222,6 +222,35 @@ export function createCircuitProgress() {
   };
 }
 
+/**
+ * createCircuitProgressAt — a progress record for something that starts partway
+ * round the lap instead of on the grid.
+ *
+ * WHY IT LIVES HERE: traffic.js spawns its cars at three points spread around the
+ * circuit, and a car placed beside the north gate must be HEADING for the north
+ * gate — otherwise it drives backwards across the island toward gate one, which is
+ * exactly what it did before this existed. Building that record inside traffic.js
+ * would put the shape of a progress object in two files, and the essay at the top
+ * of this one is about what two owners of the same fact cost this project.
+ *
+ * The route is MAIN because traffic is predictable scenery, not a competitor: it
+ * should never take the shortcut and surprise a player coming out of the tunnel.
+ *
+ * Big-O: O(G) over a 7-entry route table, called three times at room creation.
+ */
+export function createCircuitProgressAt(gateId) {
+  const index = MAIN_ROUTE.indexOf(gateId);
+  if (index < 0) {
+    throw new Error(`createCircuitProgressAt: '${gateId}' is not on the MAIN route`);
+  }
+  return {
+    route: 'MAIN',
+    nextGateIds: [gateId],
+    clearedGateCount: index,
+    lapsCompleted: 0,
+  };
+}
+
 export function crossesDirectedGate(gate, previous, current) {
   const moveX = current.x - previous.x;
   const moveZ = current.z - previous.z;
