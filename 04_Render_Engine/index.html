@@ -7,8 +7,70 @@
     <meta name="description" content="Rumble Bunny — an 8-player stunt kart racer. Host a room, share the code, and race the coastal circuit over LAN or online." />
     <meta name="theme-color" content="#ff6a00" />
     <title>Rumble Bunny</title>
+    <!--
+      BOOT SPLASH — deliberately inline, and deliberately not JavaScript.
+
+      Measured on the production build: first-paint 112ms, first-contentful-paint
+      680ms. Everything in that gap is the 706 KB module bundle parsing, and until it
+      does the page is `body { background:#000 }` — a black rectangle with no title,
+      no spinner and nothing to say it is working. idea.md:15 promises play over a
+      mobile hotspot, where that same bundle is seconds rather than half of one.
+
+      A loading screen built in JS would be INSIDE the bundle it is waiting for, so it
+      cannot possibly paint first — which is exactly why this is markup in the
+      document with its styles inline. No stylesheet request, no font request, no
+      script: it is on screen at first paint and main.js removes it once the menu
+      exists. z-index sits under the fatal-error overlay (9999) so a boot crash is
+      still visible rather than hidden behind a permanent splash.
+    -->
+    <style>
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 3000;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 18px;
+        background: radial-gradient(ellipse at 50% 40%, #3c1a08 0%, #17120f 70%, #0b0908 100%);
+        font-family: 'Haettenschweiler', 'Arial Narrow Bold', 'DIN Condensed',
+          'Franklin Gothic Heavy', Impact, 'Arial Black', sans-serif;
+        letter-spacing: 0.06em;
+      }
+      #boot-splash .boot-top {
+        font-size: clamp(2.1rem, 10vw, 3.6rem);
+        color: #ded6c8;
+        transform: skewX(-9deg);
+        line-height: 0.9;
+      }
+      #boot-splash .boot-bottom {
+        display: inline-block;
+        padding: 0.04em 0.26em 0.1em;
+        font-size: clamp(2.3rem, 11vw, 4rem);
+        color: #fff5e6;
+        background: linear-gradient(180deg, #ffb400 0%, #ff6a00 48%, #d81f14 100%);
+        border: 3px solid #17120f;
+        border-radius: 4px;
+        transform: skewX(-9deg);
+        line-height: 0.9;
+      }
+      #boot-splash .boot-msg {
+        margin: 0;
+        font-family: 'Bahnschrift', 'DIN Alternate', 'Segoe UI', sans-serif;
+        font-size: 0.75rem; font-weight: 700; letter-spacing: 0.3em;
+        color: #ffb400;
+        animation: boot-pulse 1.1s ease-in-out infinite;
+      }
+      @keyframes boot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash .boot-msg { animation: none; }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash">
+      <div>
+        <div class="boot-top">RUMBLE</div>
+        <div class="boot-bottom">BUNNY</div>
+      </div>
+      <p class="boot-msg">LOADING</p>
+    </div>
     <div id="touch-controls" style="display: none;">
       <div class="touch-left-cluster">
         <button id="touch-left" class="touch-btn">L</button>

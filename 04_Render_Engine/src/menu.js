@@ -21,6 +21,7 @@
  * CSS gradient, the swatches are colour values. idea.md:15 promises play over a
  * mobile hotspot, so anything that needs to be fetched can't be here.
  */
+import { CIRCUIT_DEF } from '../../03_Stable_Build/circuit-track.js';
 
 /**
  * The five hex values are gameplay data, not decoration — they are sent to the
@@ -35,6 +36,17 @@ const KART_LIVERIES = [
   { hex: '#ffaa00', name: 'AMBER', label: 'Amber gold paint' },
   { hex: '#cc00ff', name: 'VOLTAGE', label: 'Voltage purple paint' },
 ];
+
+/**
+ * How many karts a room holds. DERIVED, not typed as 8.
+ *
+ * lobby.js already takes MAX_PLAYERS from `CIRCUIT_DEF.spawnPositions.length`, and
+ * ADR-0009 records what happens when a second file restates a number instead of
+ * deriving it: the lobby test sat red for days asserting 8 against a hard-coded 16.
+ * A roster that promises "OF 8" while the server seats a different number would be
+ * the same bug wearing different clothes.
+ */
+const MAX_KARTS = CIRCUIT_DEF.spawnPositions.length;
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
@@ -183,6 +195,10 @@ export class MainMenu {
           <span class="code-plate-label">ROOM CODE</span>
           <span class="code-plate-value" id="code-plate-value">- - - -</span>
         </div>
+        <div class="roster">
+          <p class="roster-count" id="roster-count">CONNECTING…</p>
+          <ul class="roster-grid" id="roster-grid"></ul>
+        </div>
         <div class="loader"></div>
         <p class="subtitle" id="lobby-code-display">Connecting...</p>
         ${hostControls}
@@ -224,6 +240,61 @@ export class MainMenu {
 
     const display = this.container.querySelector('#lobby-code-display');
     if (display) display.textContent = 'SHARE THE CODE — UP TO 8 KARTS';
+  }
+
+  /**
+   * Who is actually in the room. Called once per frame from main.js, same contract
+   * as showLobbyCode.
+   *
+   * WHY THIS EXISTS: the lobby told a host "SHARE THE CODE — UP TO 8 KARTS" and then
+   * never mentioned it again. You sent the code to a friend and got no signal
+   * whatsoever that they had arrived — no count, no name, nothing changed on screen.
+   * For a game whose whole pitch (idea.md) is an 8-player room you join by code, the
+   * one moment the lobby exists for was invisible.
+   *
+   * WHY NO PROTOCOL CHANGE: the ledger already broadcasts every joined vehicle 60
+   * times a second, and each carries the player's chosen livery in
+   * `modifiers.color_sync`. Bots only fill slots at START, so during WAITING a
+   * P-prefixed vehicle IS a human. Adding a roster message would have been a second
+   * source for something already on the wire (ponytail Rung 1).
+   *
+   * @param {Array} entries [{ pid, color }] sorted by slot
+   * @param {string|null} localPid so a player can find themselves
+   */
+  showLobbyRoster(entries, localPid = null) {
+    const grid = this.container.querySelector('#roster-grid');
+    if (!grid) return; // not on the lobby screen
+
+    // Bail unless something actually changed. Without this the roster would rebuild
+    // its DOM 60 times a second — the exact bug showLobbyCode's comment describes,
+    // and the reason that method compares before it writes.
+    const signature = `${localPid}|${entries.map((e) => `${e.pid}:${e.color}`).join(',')}`;
+    if (signature === this._rosterSignature) return;
+    this._rosterSignature = signature;
+
+    const count = this.container.querySelector('#roster-count');
+    if (count) {
+      count.textContent = `${entries.length} / ${MAX_KARTS} JOINED`;
+    }
+
+    // Every slot is drawn, filled or not, because "3 / 8" reads very differently
+    // next to five visibly empty bays than it does on its own — the empty seats are
+    // the reason the host is still waiting.
+    let html = '';
+    for (let slot = 0; slot < MAX_KARTS; slot++) {
+      const entry = entries[slot];
+      if (!entry) {
+        html += `<li class="roster-slot roster-slot-open"><span class="roster-chip"></span><span class="roster-name">OPEN</span></li>`;
+        continue;
+      }
+      const isYou = localPid && entry.pid === localPid;
+      html += `
+        <li class="roster-slot${isYou ? ' roster-slot-you' : ''}">
+          <span class="roster-chip" style="background:${esc(entry.color)}"></span>
+          <span class="roster-name">${esc(entry.pid)}${isYou ? ' (YOU)' : ''}</span>
+        </li>`;
+    }
+    grid.innerHTML = html;
   }
 
   hide() {

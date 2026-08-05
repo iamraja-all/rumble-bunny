@@ -516,6 +516,83 @@ body {
   color: var(--rb-chrome);
 }
 
+/* ── Lobby roster ─────────────────────
+   Eight bays, drawn whether or not anyone is in them: "3 / 8" means something
+   quite different next to five visibly empty seats, and the empty seats are the
+   reason the host is still standing there. */
+.roster {
+  margin: 18px 0 6px;
+}
+
+.roster-count {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--rb-amber);
+}
+
+.roster-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+}
+
+.roster-slot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid var(--rb-ink);
+  border-radius: 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--rb-chrome);
+  min-width: 0;
+}
+
+.roster-chip {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+  background: var(--rb-steel);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.28), 0 0 0 2px rgba(0, 0, 0, 0.45);
+}
+
+.roster-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roster-slot-open {
+  color: var(--rb-steel);
+  border-style: dashed;
+  border-color: rgba(108, 99, 89, 0.5);
+}
+
+.roster-slot-open .roster-chip {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px rgba(108, 99, 89, 0.5);
+}
+
+/* Same cyan "this one is you" convention as the results screen and the minimap. */
+.roster-slot-you {
+  border-color: var(--rb-cyan);
+  color: var(--rb-cyan);
+}
+
+@media (max-width: 430px) {
+  .roster-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* A kart that did not finish. Dimmed rather than hidden — it still happened, and
    the player is often one of them, so the row has to be there to be read. */
 .result-row-dnf {

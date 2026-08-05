@@ -60,6 +60,12 @@ const menu = new MainMenu((action) => {
   // lastTime is already set, just let the existing loop continue
 });
 
+// The boot splash (index.html) has done its job now that the menu is on screen — it
+// only covers the gap between first paint and this bundle finishing parsing. Removed
+// rather than hidden so it can never swallow a click, and removed here rather than on
+// window.load because load also waits on assets the menu does not need.
+document.getElementById('boot-splash')?.remove();
+
 // WHY A GLOBAL ERROR TRAP:
 // animate() schedules its next frame BEFORE running its body, so an exception in
 // the body does not stop the loop — it just throws again every single frame. The
@@ -105,6 +111,23 @@ function animate() {
   if (state && state.length > 0) {
     if (network.roomCode && menu.container && menu.container.parentNode) {
       menu.showLobbyCode(network.roomCode);
+
+      // Who else is in the room. Derived from the ledger rather than a new message:
+      // bots only take slots at START, so while the lobby is up every P-prefixed
+      // vehicle is a human who joined with the code. T1-T3 are traffic scenery and
+      // must not be counted as players — that conflation is the same mistake that
+      // once put traffic in the race results (ADR-0007).
+      const joined = state
+        .filter((e) => e.type === 'VEHICLE' && /^P\d+$/.test(e.id))
+        .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
+        .map((e) => ({
+          pid: e.id,
+          color:
+            e.modifiers && e.modifiers.color_sync !== undefined
+              ? `#${Number(e.modifiers.color_sync).toString(16).padStart(6, '0')}`
+              : '#8b8b8b',
+        }));
+      menu.showLobbyRoster(joined, network.pid);
     }
 
     // Hide menu and show HUD once race state begins broadcasting
