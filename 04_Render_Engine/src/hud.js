@@ -20,12 +20,57 @@
  * looks like. ADR-0009 already recorded what happens in this codebase when a second
  * file restates something instead of deriving it.
  */
-function formatLapTime(seconds) {
+export function formatLapTime(seconds) {
   const t = Math.max(0, seconds || 0);
   const mins = Math.floor(t / 60);
   const secs = Math.floor(t % 60);
   const tenths = Math.floor((t * 10) % 10);
   return `${mins}:${secs.toString().padStart(2, '0')}.${tenths}`;
+}
+
+/**
+ * Where the local player is in the field: { rank, total, label }.
+ *
+ * WHY THIS IS A PURE EXPORTED FUNCTION AND NOT INLINE IN update():
+ * this calculation has been wrong twice, and both bugs were invisible from the code.
+ *   1. It ranked EVERY entity of type VEHICLE. Traffic serializes as VEHICLE too, so
+ *      three cones counted as racers and an eight-player race reported "9th".
+ *   2. It sorted on raw Z. On a closed circuit Z resets toward the start line the
+ *      moment a kart completes a lap, so the leader was reported last and a kart a
+ *      full lap down was reported first.
+ * Both were fixed in P3a by reading the code, not by a failing test, because nothing
+ * about it was reachable without a browser and a live race. Lifted out here it needs
+ * neither: it is entities in, position out, and Node can check it.
+ *
+ * Rank is laps, then gates cleared, then Z as a tiebreak inside the current sector.
+ * A player id is `P<n>`; traffic is `T<n>` and must never appear in the field.
+ *
+ * Big-O: O(R log R) over R <= 8 racers, once per frame.
+ */
+export function rankRacers(entities, localPid) {
+  const racers = (entities || []).filter((e) => e.type === 'VEHICLE' && /^P\d+$/.test(e.id));
+  racers.sort((a, b) => {
+    const lapDiff = (b.modifiers?.lap || 0) - (a.modifiers?.lap || 0);
+    if (lapDiff !== 0) return lapDiff;
+    const cpDiff = (b.modifiers?.checkpoint || 0) - (a.modifiers?.checkpoint || 0);
+    if (cpDiff !== 0) return cpDiff;
+    return a.z - b.z;
+  });
+
+  const rank = racers.findIndex((v) => v.id === localPid) + 1;
+  return { rank, total: racers.length, label: rank > 0 ? `${rank}${ordinal(rank)}` : '--' };
+}
+
+/**
+ * 1st / 2nd / 3rd / 4th — with the teens exception.
+ * 11th, 12th and 13th take "th" despite ending 1, 2, 3. Irrelevant at eight players
+ * today, but a lobby cap is exactly the kind of number that changes.
+ */
+function ordinal(n) {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return 'th';
+  const ones = n % 10;
+  return ones === 1 ? 'st' : ones === 2 ? 'nd' : ones === 3 ? 'rd' : 'th';
 }
 
 export class HUD {
@@ -268,22 +313,9 @@ export class HUD {
     // Racers are the P<n> ids the lobby hands out; traffic uses T<n>. Rank is now
     // laps first, then progress through the circuit's gates, then Z as a tiebreak
     // within the current sector.
-    const racers = entities.filter(e => e.type === 'VEHICLE' && /^P\d+$/.test(e.id));
-    racers.sort((a, b) => {
-      const lapDiff = (b.modifiers?.lap || 0) - (a.modifiers?.lap || 0);
-      if (lapDiff !== 0) return lapDiff;
-      const cpDiff = (b.modifiers?.checkpoint || 0) - (a.modifiers?.checkpoint || 0);
-      if (cpDiff !== 0) return cpDiff;
-      return a.z - b.z;
-    });
-    const rank = racers.findIndex(v => v.id === localPid) + 1;
-    // 11th/12th/13th take "th", not "st/nd/rd" — irrelevant at 8 players today, but
-    // the lobby cap is the kind of thing that changes.
-    const tens = rank % 100;
-    const suffix = tens >= 11 && tens <= 13 ? 'th'
-      : rank % 10 === 1 ? 'st' : rank % 10 === 2 ? 'nd' : rank % 10 === 3 ? 'rd' : 'th';
-    this.elPosition.textContent = rank > 0 ? `${rank}${suffix}` : '--';
-    if (this.elPositionTotal) this.elPositionTotal.textContent = `/ ${racers.length}`;
+    const standing = rankRacers(entities, localPid);
+    this.elPosition.textContent = standing.label;
+    if (this.elPositionTotal) this.elPositionTotal.textContent = `/ ${standing.total}`;
 
     // Lap counter
     const lap = me.modifiers?.lap || 0;
