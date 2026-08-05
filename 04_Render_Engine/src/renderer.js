@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+// GLTFLoader and DRACOLoader are deliberately NOT imported here — see loadAssets().
 import { Sky } from 'three/addons/objects/Sky.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -155,7 +154,14 @@ export class Renderer {
     this.setupSkyAndEnvironment();
     this.setupEnvironment();
     this.setupPostProcessing();
-    this.loadAssets();
+    // loadAssets is async now (it lazily imports the GLTF/Draco loaders). Nothing
+    // waits on it — the procedural kart is already the default and karts upgrade
+    // themselves if a GLB ever arrives — but the rejection MUST be handled or a
+    // failed dynamic import becomes a silent unhandled rejection, which is precisely
+    // the class of mute failure the fatal-error overlay exists to prevent.
+    this.loadAssets().catch((err) => {
+      console.error('[renderer] optional GLB kart assets failed to load:', err);
+    });
 
     // Smooth camera follow state: High and Wide angle for better visibility
     this._camPos = new THREE.Vector3(0, 10, 18);
@@ -195,14 +201,21 @@ export class Renderer {
   }
 
   // ── ASSET LOADING ─────────────────────────────────────────────────────
-  loadAssets() {
-    const loader = new GLTFLoader();
-    
-    // Add Draco decompression support
-    const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath('/draco/');
-    loader.setDRACOLoader(dracoLoader);
-    
+  /**
+   * WHY THIS IS ASYNC AND THE LOADERS ARE IMPORTED INSIDE IT:
+   * `useGlbKart` is false — the procedural muscle-car kart won that comparison
+   * outright (ADR-0006: 8 → 27 → 46fps once the eleven detailed GLBs went away), and
+   * the flag is kept only so the A/B can be re-run. But a STATIC import runs whether
+   * the flag is true or not, so GLTFLoader and DRACOLoader sat in the entry chunk of
+   * every single page load, and DRACOLoader's presence also made Vite emit the whole
+   * Draco decoder — 1.3 MB of .js and .wasm — as build assets for a path that never
+   * executes.
+   *
+   * Importing them here keeps the toggle fully working while charging nobody for it:
+   * flip `useGlbKart` to true and the loaders are fetched on demand. Measured effect
+   * on the entry chunk is recorded in ADR-0018.
+   */
+  async loadAssets() {
     // 1. The Littlest Tokyo city.glb load lived here and has been removed.
     //    WHY: it is a 4.1 MB Japanese street scene parked at (0, -2, -50) in the
     //    middle of a COASTAL circuit — the wrong place entirely, and it was
@@ -212,7 +225,19 @@ export class Renderer {
     //    it actually matches the track it surrounds.
 
     // 2. Load Premium F1 / Sports Car (only when GLB karts are enabled)
-    if (this.useGlbKart) loader.load(
+    if (!this.useGlbKart) return;
+
+    const [{ GLTFLoader }, { DRACOLoader }] = await Promise.all([
+      import('three/addons/loaders/GLTFLoader.js'),
+      import('three/addons/loaders/DRACOLoader.js'),
+    ]);
+
+    const loader = new GLTFLoader();
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('/draco/');
+    loader.setDRACOLoader(dracoLoader);
+
+    loader.load(
       '/models/kart.glb?v=' + Date.now(),
       (gltf) => {
         console.log('✅ GLTF kart model loaded successfully');
