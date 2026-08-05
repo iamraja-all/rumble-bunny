@@ -1,4 +1,13 @@
-import { parseLedger } from './ledger.js';
+// THE WIRE FORMAT HAS ONE DEFINITION NOW (RSK-007).
+// `04_Render_Engine/src/ledger.js` was a byte-identical copy of the engine's
+// `ledger.js`, with nothing whatsoever keeping the two in step. One edit to either
+// side desynchronised the server and every client while the entire test suite stayed
+// green — the parser and the serializer would simply have disagreed about the format,
+// silently, at 60 frames a second. The risk register logged it as needing a Vite
+// alias and its own slice; it needed neither. circuit-visuals, minimap, scenery and
+// menu already import straight out of 03_Stable_Build and that path builds, so the
+// duplicate was deleted and this reads the same file the server writes.
+import { parseLedger } from '../../03_Stable_Build/ledger.js';
 import { InputManager } from './input.js';
 
 export class NetworkController {
