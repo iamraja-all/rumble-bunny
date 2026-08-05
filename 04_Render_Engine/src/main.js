@@ -115,7 +115,7 @@ function animate() {
     if (network.raceInfo.state === 'COMPLETE' && !window.resultsShown && network.leaderboard.length > 0) {
       window.resultsShown = true;
       document.getElementById('hud').style.display = 'none';
-      menu.showResults(network.leaderboard);
+      menu.showResults(network.leaderboard, network.pid);
     }
 
     renderer.updateState(state, network.pid);

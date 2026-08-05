@@ -271,8 +271,23 @@ setInterval(() => {
     const raceLine = `RACE|${raceInfo.state}|${raceInfo.countdown}|${raceInfo.raceTime.toFixed(1)}|${raceInfo.totalLaps}|${raceInfo.finishOrder.length}`;
     
     let fullFrame = raceLine;
-    if (raceInfo.finishOrder.length > 0) {
-      fullFrame += '\nLEADERBOARD|' + JSON.stringify(raceInfo.finishOrder);
+    // LEADERBOARD carries the FINAL STANDINGS and is sent only once the race is over.
+    //
+    // Two things changed here. It used to send `finishOrder` from the moment the
+    // first racer crossed, re-running JSON.stringify on it 60 times a second for the
+    // rest of the race — and no client ever read it before COMPLETE (R07). And it
+    // was gated on `finishOrder.length > 0`, so a race where NOBODY finished sent no
+    // leaderboard at all: the room reached COMPLETE and every client sat on a frozen
+    // HUD with no results and no way out. `standings` always contains every entrant,
+    // so that dead end is gone.
+    //
+    // Stringified once and cached on the room, because the broadcast loop keeps
+    // running after the race ends and the standings never change again.
+    if (raceInfo.standings) {
+      if (!room._standingsJson) {
+        room._standingsJson = JSON.stringify(raceInfo.standings);
+      }
+      fullFrame += '\nLEADERBOARD|' + room._standingsJson;
     }
     if (vehicleLedger) fullFrame += '\n' + vehicleLedger;
     if (itemLedger) fullFrame += '\n' + itemLedger;

@@ -89,6 +89,18 @@ export class RaceManager {
     this.previousPositions = new Map();
     this.totalLaps = TOTAL_LAPS;
     this.finishOrder = [];
+    // Final standings — EVERY entrant, finishers and DNFs alike. Null until the race
+    // completes, then built exactly once (see _settleCompletion).
+    //
+    // WHY THIS EXISTS SEPARATELY FROM finishOrder: finishOrder is what it says, the
+    // order people crossed the line, and nothing else belongs in it. But a results
+    // screen driven by finishOrder alone shows a five-row leaderboard at the end of an
+    // eight-car race and silently omits everyone who did not finish — including,
+    // usually, the player reading it. ADR-0010 deliberately recorded `dnf: true`
+    // rather than marking stragglers finished, precisely "so a results screen can
+    // distinguish finishing last from never finishing", and then nothing ever
+    // consumed it. This is the consumer.
+    this.standings = null;
     // Instance field rather than a bare constant so a test can shorten the window
     // without sitting through 45 simulated seconds. See _settleCompletion.
     this.dnfGraceSeconds = DNF_GRACE_SECONDS;
@@ -188,7 +200,7 @@ export class RaceManager {
         vehicle.modifiers.out_of_bounds = rs.outOfBoundsTimer > 0 ? 1 : 0;
       }
 
-      this._settleCompletion();
+      this._settleCompletion(lobby);
     }
   }
 
@@ -328,7 +340,49 @@ export class RaceManager {
    * an early break rather than [...this.raceStates.values()].every(), which
    * allocated a fresh array on every frame inside the 60Hz path (R07).
    */
-  _settleCompletion() {
+  /**
+   * Final standings for the results screen: every entrant, ordered the way a person
+   * reads a race result — finishers by the time they crossed, then everyone who did
+   * not finish, ranked by how far they actually got.
+   *
+   * WHY DNFs ARE RANKED AT ALL rather than dumped in registration order: on this
+   * circuit a kart that completed two laps and one that never left the grid are both
+   * "DNF", and showing them in an arbitrary order tells the player nothing. Laps then
+   * cleared gates is the same progress measure the race itself uses, so the ordering
+   * agrees with the position the player saw on the HUD a second earlier.
+   *
+   * Big-O: O(P log P) over P <= 8 entrants, run ONCE when the race completes — never
+   * in the 60Hz path (R07).
+   */
+  _buildStandings(lobby) {
+    const rows = [];
+    for (const [clientId, rs] of this.raceStates.entries()) {
+      const vehicle = lobby?.players?.get(clientId);
+      rows.push({
+        // Fall back to clientId only if the vehicle is already gone; a row with no
+        // name at all would be worse than an ugly one.
+        pid: vehicle ? vehicle.id : clientId,
+        dnf: !!rs.dnf,
+        // A DNF has no meaningful finish time — it holds the moment the grace window
+        // expired, which is identical for every straggler and would read as a real
+        // result. The client shows "DNF" instead.
+        time: rs.dnf ? 0 : rs.finishTime,
+        lap: rs.lap,
+        gates: rs.trackProgress?.clearedGateCount ?? 0,
+      });
+    }
+
+    rows.sort((a, b) => {
+      if (a.dnf !== b.dnf) return a.dnf ? 1 : -1;
+      if (!a.dnf) return a.time - b.time;
+      if (b.lap !== a.lap) return b.lap - a.lap;
+      return b.gates - a.gates;
+    });
+
+    return rows;
+  }
+
+  _settleCompletion(lobby) {
     if (this.raceStates.size === 0) return;
 
     let allFinished = true;
@@ -357,6 +411,13 @@ export class RaceManager {
     }
 
     if (allFinished) {
+      // Build the standings on the TRANSITION only. _settleCompletion runs every tick
+      // and the broadcast loop keeps running after the race ends, so recomputing here
+      // unguarded would sort the field 60 times a second for as long as the room
+      // lives (R07).
+      if (this.state !== 'COMPLETE') {
+        this.standings = this._buildStandings(lobby);
+      }
       this.state = 'COMPLETE';
     }
   }
@@ -372,6 +433,7 @@ export class RaceManager {
       raceTime: this.raceTime,
       totalLaps: this.totalLaps,
       finishOrder: this.finishOrder,
+      standings: this.standings,
     };
   }
 }

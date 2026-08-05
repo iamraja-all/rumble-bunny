@@ -29,6 +29,11 @@
   --rb-amber: #ffb400;
   --rb-orange: #ff6a00;
   --rb-red: #d81f14;
+  /* "You". The one cool colour in a warm palette, and deliberately so: minimap.js
+     already paints the LOCAL player #00ccff whatever livery they picked, so cyan
+     means "this one is you" everywhere in the game. The results screen borrows the
+     same convention instead of inventing a second one. */
+  --rb-cyan: #00ccff;
 }
 
 body {
@@ -509,6 +514,34 @@ body {
 .result-time {
   font-variant-numeric: tabular-nums;
   color: var(--rb-chrome);
+}
+
+/* A kart that did not finish. Dimmed rather than hidden — it still happened, and
+   the player is often one of them, so the row has to be there to be read. */
+.result-row-dnf {
+  color: rgba(226, 232, 240, 0.42);
+}
+
+.result-row-dnf .result-pos,
+.result-row-dnf .result-time {
+  color: rgba(226, 232, 240, 0.42);
+}
+
+/* The one row the player is looking for. A left rule reads at a glance without
+   fighting the winner's gradient when the player IS the winner — both can apply to
+   the same row, which is why this styles a border rather than the background. */
+.result-row-you {
+  box-shadow: inset 3px 0 0 var(--rb-cyan);
+  color: #fff;
+}
+
+.result-row-you .result-name {
+  color: var(--rb-cyan);
+}
+
+/* A DNF row that is also YOU stays legible — the dim must not win over the marker. */
+.result-row-dnf.result-row-you {
+  color: rgba(226, 232, 240, 0.75);
 }
 
 /* ── Mobile (usable at 375px) ────────── */

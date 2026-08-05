@@ -237,7 +237,11 @@ export class MainMenu {
     }, 500);
   }
 
-  showResults(leaderboardData) {
+  /**
+   * @param {Array} standings every entrant, finishers first — see RaceManager._buildStandings
+   * @param {string|null} localPid the slot this player is driving, so they can find themselves
+   */
+  showResults(standings, localPid = null) {
     if (!this.container.parentNode) {
       document.body.appendChild(this.container);
     }
@@ -246,13 +250,35 @@ export class MainMenu {
     this.container.style.opacity = '1';
     this.container.style.pointerEvents = 'auto';
 
+    // WHY EVERY ENTRANT AND NOT JUST FINISHERS: this used to render `finishOrder`,
+    // so an eight-car race that five karts finished produced a five-row screen with
+    // no mention of the other three — and the player is very often one of the three,
+    // reading a result they do not appear on at all. The server now sends full
+    // standings; a DNF gets a row, a dash for position and DNF where the time goes.
     let rowsHtml = '';
-    leaderboardData.forEach((entry, index) => {
+    let finisherCount = 0;
+    standings.forEach((entry) => {
+      const isDnf = !!entry.dnf;
+      if (!isDnf) finisherCount++;
+
+      // Position numbering counts finishers only — a DNF has no finishing position,
+      // and numbering them anyway would read as "6th" rather than "did not finish".
+      const position = isDnf ? '—' : String(finisherCount);
+      const result = isDnf ? 'DNF' : `${entry.time.toFixed(1)}s`;
+
+      const classes = ['result-row'];
+      if (!isDnf && finisherCount === 1) classes.push('result-row-win');
+      if (isDnf) classes.push('result-row-dnf');
+      // The one row the player actually looks for.
+      if (localPid && entry.pid === localPid) classes.push('result-row-you');
+
+      const label = localPid && entry.pid === localPid ? `${esc(entry.pid)} (YOU)` : esc(entry.pid);
+
       rowsHtml += `
-          <li class="result-row${index === 0 ? ' result-row-win' : ''}">
-            <span class="result-pos">${index + 1}</span>
-            <span class="result-name">${esc(entry.pid)}</span>
-            <span class="result-time">${entry.time.toFixed(1)}s</span>
+          <li class="${classes.join(' ')}">
+            <span class="result-pos">${position}</span>
+            <span class="result-name">${label}</span>
+            <span class="result-time">${result}</span>
           </li>
       `;
     });

@@ -408,5 +408,73 @@ function place(lobby, clientId, x, z) {
   assert(v.x === 5 && v.z === 34, `T18: with no gates cleared it returns to its grid slot (got ${v.x},${v.z})`);
 })();
 
+// ── Test 19: final standings include EVERY entrant, not just finishers ────────
+// A results screen built from finishOrder shows five rows at the end of an eight-car
+// race and omits everyone who did not finish — usually including the player reading
+// it. ADR-0010 recorded `dnf: true` so the screen could tell "finished last" from
+// "never finished"; standings is what finally consumes it.
+(() => {
+  const race = new RaceManager();
+  const lobby = makeLobby(['P0', 'P1', 'P2']);
+  ['client-0', 'client-1', 'client-2'].forEach((c) => race.registerPlayer(c));
+  race.dnfGraceSeconds = 1.0;
+  startRacing(race, lobby);
+
+  assert(race.standings === null, 'T19a: no standings exist while the race is running');
+
+  // client-0 finishes all three laps; client-1 completes one lap then stops;
+  // client-2 never moves at all.
+  for (let lap = 0; lap < 3; lap++) driveLap(race, lobby, 'client-0');
+  driveLap(race, lobby, 'client-1');
+  tick(race, lobby, 1.5); // outlast the shortened DNF grace
+
+  assert(race.state === 'COMPLETE', `T19b: race completed (got ${race.state})`);
+  assert(Array.isArray(race.standings), 'T19c: standings are built on completion');
+  assert(race.standings.length === 3, `T19d: every entrant appears (got ${race.standings.length} of 3)`);
+
+  const [first, second, third] = race.standings;
+  assert(first.pid === 'P0' && first.dnf === false, `T19e: the finisher is first (got ${first.pid}, dnf=${first.dnf})`);
+  assert(first.time > 0, `T19f: the finisher carries a real time (got ${first.time})`);
+
+  // Both stragglers are DNF, but the one that got further must rank above the one
+  // that never left the grid — otherwise the order says nothing.
+  assert(second.dnf === true && third.dnf === true, 'T19g: both stragglers are marked DNF');
+  assert(second.pid === 'P1', `T19h: the DNF that completed a lap ranks above the idle one (got ${second.pid})`);
+  assert(third.pid === 'P2', `T19i: the kart that never moved is last (got ${third.pid})`);
+  assert(second.lap === 1 && third.lap === 0, `T19j: standings carry lap progress (${second.lap}, ${third.lap})`);
+  // A DNF's finishTime is just the moment the grace expired — identical for every
+  // straggler — so publishing it would read as a real result.
+  assert(second.time === 0 && third.time === 0, 'T19k: a DNF publishes no finish time');
+})();
+
+// ── Test 20: a race NOBODY finishes still produces standings ──────────────────
+// This was a dead end: LEADERBOARD was only sent when finishOrder was non-empty, so
+// a race where every entrant DNF'd completed with no results at all and left every
+// client sitting on a frozen HUD with no way out.
+(() => {
+  const race = new RaceManager();
+  const lobby = makeLobby(['P0', 'P1']);
+  ['client-0', 'client-1'].forEach((c) => race.registerPlayer(c));
+  race.dnfGraceSeconds = 1.0;
+  startRacing(race, lobby);
+
+  // Nobody drives. Without a first finish the grace window never opens, so the race
+  // legitimately stays RACING — the engine is right and there is nothing to show yet.
+  tick(race, lobby, 5.0);
+  assert(race.state === 'RACING', `T20a: with no finishers at all the race is still running (got ${race.state})`);
+
+  // One racer finishes and then leaves. Everyone remaining DNFs, and the finisher is
+  // gone from the lobby — so the standings must still name every remaining entrant.
+  for (let lap = 0; lap < 3; lap++) driveLap(race, lobby, 'client-0');
+  race.removePlayer('client-0');
+  lobby.players.delete('client-0');
+  tick(race, lobby, 1.5);
+
+  assert(race.state === 'COMPLETE', `T20b: race completes once the leaver's grace expires (got ${race.state})`);
+  assert(race.standings.length === 1, `T20c: standings cover the remaining entrant (got ${race.standings.length})`);
+  assert(race.standings[0].dnf === true, 'T20d: and record them as DNF rather than omitting them');
+  assert(race.standings[0].pid === 'P1', `T20e: named from the lobby vehicle (got ${race.standings[0].pid})`);
+})();
+
 console.log(`\n--- ${passed} passed, ${failed} failed ---`);
 if (failed > 0) process.exit(1);
