@@ -5,7 +5,7 @@ import { HUD } from './hud.js';
 import { SoundEngine } from './audio.js';
 import { Minimap } from './minimap.js';
 import { MainMenu } from './menu.js';
-import { startProbe } from './debug-probe.js';
+import { startProbe, exposeRenderer } from './debug-probe.js';
 
 // Get canvas
 const canvas = document.querySelector('#app');
@@ -17,6 +17,7 @@ const renderer = new Renderer(canvas);
 // ?debug — see debug-probe.js for why the samples are persisted rather than
 // held on window.
 const probeTick = startProbe(renderer);
+exposeRenderer(renderer);
 
 // Initialize Audio Engine
 const audio = new SoundEngine();

@@ -313,8 +313,21 @@ export class Renderer {
     const u = sky.material.uniforms;
     u['turbidity'].value = 2;        // WHY: lower = less bright white haze
     u['rayleigh'].value = 0.5;       // WHY: lower = dimmer sky, stops IBL washing the scene out
-    u['mieCoefficient'].value = 0.005;
-    u['mieDirectionalG'].value = 0.8; // sun glow tightness
+    // WHY THE SUN GLOW WAS TIGHTENED (0.005 -> 0.0015, 0.8 -> 0.65):
+    // MEASURED, by locking the camera to the sun's azimuth and reading the luminance
+    // histogram off the framebuffer. Driving toward the sun put 27.2% of the frame at
+    // near-white and 5.0% fully blown: the chequered banner washed to a single flat
+    // tone, the checkpoint gates lost their colours entirely, and the grass read grey.
+    // Mie scattering is the halo AROUND the sun, so shrinking it targets exactly the
+    // region that was flooding and leaves the rest of the sky alone.
+    //
+    // The rejected alternative is worth recording: dropping `rayleigh` from 0.5 to 0.3
+    // fixed the sun view even harder (8.1% near-white) but dimmed the sky globally,
+    // taking the AWAY-from-sun view from mean luminance 109 to 83 — it fixed one
+    // heading by making every other heading murky. Mie plus bloom costs the away view
+    // only 9% instead of 24%. Always measure the view you are NOT trying to fix.
+    u['mieCoefficient'].value = 0.0015;
+    u['mieDirectionalG'].value = 0.65; // sun glow tightness
 
     // Sun position — mid-afternoon: 28° elevation gives long, readable shadows.
     const sun = new THREE.Vector3();
@@ -359,17 +372,34 @@ export class Renderer {
     composer.setSize(window.innerWidth, window.innerHeight);
     composer.addPass(new RenderPass(this.scene, this.camera));
 
+    // WHAT MEASUREMENT REVEALED ABOUT THIS PASS, AND WHY IT IS NOW NEARLY OFF:
+    // the comment above (and ADR-0005) says bloom is here to glow "emissive checkpoint
+    // gates, neon billboards, boost flames". It is not doing that and never has. The
+    // threshold is applied to HDR luminance BEFORE tone mapping: a gate's emissive is
+    // colour 0x33ddff at emissiveIntensity 0.45, which is a luminance of roughly 0.26
+    // — far BELOW the 0.9 threshold, so gates have never bloomed. The physical Sky,
+    // meanwhile, is far ABOVE it. So this pass has been blooming the one thing nobody
+    // asked it to and skipping everything it was added for.
+    //
+    // Confirmed by measurement, not inference: switching bloom off dropped fully-blown
+    // pixels from 5.01% of the frame to 0.34% and near-white from 27.2% to 14.5%.
+    // It is what turned a bright sky into a white-out, and what smeared light streaks
+    // across the guardrails and over the minimap panel.
+    //
+    // Kept rather than deleted, at a token strength, because it is not useless: the
+    // white MeshBasicMaterial bulb on each kart nose and the spawner-pad rings
+    // (0x66ffff scaled 1.3x) ARE above 1.0 and do glow. Radius came down too, since
+    // the wide radius is what produced the streaks rather than a local glow.
+    //
+    // The real fix for gate glow is SELECTIVE bloom — render emissives on their own
+    // layer through a second pass — which is a pipeline change and its own slice.
+    // Recorded so the next person does not "fix" the threshold downward and flood the
+    // frame again, which is the obvious wrong move from here.
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      // WHY 0.15 and not 0.3: with the chase camera now low and close to the
-      // horizon, driving TOWARD the Sky's sun put the sun disc itself through the
-      // bloom pass and washed the whole frame white — verified by screenshot at
-      // two different points on the circuit. Halving the strength keeps the glow
-      // on genuinely emissive things (gates, taillights, boost) without the sun
-      // taking over whenever the track turns west.
-      0.15, // strength — was 0.3, and 0.55 before that (blew out the whole scene)
-      0.3,  // radius
-      0.9   // threshold — only the brightest emissive/neon pixels bloom
+      0.05, // strength — was 0.15, 0.3, and 0.55 before that
+      0.2,  // radius — was 0.3; the wide blur was the source of the streaking
+      0.9   // threshold — unchanged; see above, lowering it makes the sky worse
     );
     composer.addPass(bloom);
     composer.addPass(new OutputPass());

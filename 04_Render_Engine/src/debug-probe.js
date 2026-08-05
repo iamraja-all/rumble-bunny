@@ -136,6 +136,20 @@ export function startProbe(rb, intervalMs = 10000) {
   };
 }
 
+/**
+ * Console handle on the live Renderer, `?debug` only.
+ *
+ * WHY: visual work on this project is done by screenshot and measurement (P3a chased
+ * overexposure across four iterations, P3d proved the coastline by driving to it), and
+ * neither is possible from the console while the renderer is sealed inside main.js's
+ * module scope. Exposing it turns "the sun looks blown out" into a luminance histogram
+ * you can read off the framebuffer. Costs a shipping player nothing — the whole file
+ * is behind the flag.
+ */
+export function exposeRenderer(rb) {
+  if (DEBUG_ON && typeof window !== 'undefined') window.rb = rb;
+}
+
 /** Console helper: `rbProbe()` dumps the full surviving series, crash or not. */
 if (DEBUG_ON && typeof window !== 'undefined') {
   window.rbProbe = () => ({ boots: readJson(KEY_BOOTS, []), samples: readJson(KEY_SAMPLES, []) });
