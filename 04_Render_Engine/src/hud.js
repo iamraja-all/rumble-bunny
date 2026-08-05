@@ -46,6 +46,10 @@ export class HUD {
           <div class="hud-stunt-value" id="hud-stunts">0</div>
         </div>
       </div>
+      <div class="hud-oob" id="hud-oob">
+        <div class="hud-oob-title">OFF COURSE</div>
+        <div class="hud-oob-sub">RETURN TO THE TRACK</div>
+      </div>
       <div class="hud-center-message" id="hud-center-msg"></div>
       <div class="hud-countdown" id="hud-countdown"></div>
     `;
@@ -63,11 +67,13 @@ export class HUD {
     this.elBoostBar = document.getElementById('hud-boost-bar');
     this.elBoostVal = document.getElementById('hud-boost-val');
     this.elStunts = document.getElementById('hud-stunts');
+    this.elOob = document.getElementById('hud-oob');
     this.elCenterMsg = document.getElementById('hud-center-msg');
     this.elCountdown = document.getElementById('hud-countdown');
 
     this._centerMsgTimer = 0;
     this._lastState = '';
+    this._lastOffCourse = false;
     this._lastCountdown = 0;
     this._lastLap = 0;
   }
@@ -121,7 +127,17 @@ export class HUD {
     if (!localPid || entities.length === 0) return;
 
     const me = entities.find(e => e.id === localPid);
-    if (!me) return;
+    if (!me) {
+      // Clear the off-course banner on the way out. Without this it would stay burned
+      // on screen forever if the local kart leaves the ledger mid-warning — a
+      // disconnect, or the room being torn down — because every code path that lowers
+      // it lives below this return.
+      if (this._lastOffCourse) {
+        this.elOob.classList.remove('is-active');
+        this._lastOffCourse = false;
+      }
+      return;
+    }
 
     // Speed (multiply by 3.6 to convert m/s → km/h for display)
     const speedKmh = Math.round(me.speed * 3.6);
@@ -159,6 +175,29 @@ export class HUD {
       this.elState.classList.add('state-air');
     } else if (me.state === 'DRIFT') {
       this.elState.classList.add('state-drift');
+    }
+
+    // Off-course warning.
+    //
+    // WHY THIS IS A SUSTAINED BANNER AND NOT A showCenterMessage TOAST:
+    // `out_of_bounds` is not a state transition, it is a flag that stays up for the
+    // whole 2.5-second grace window while the kart is off the island (see
+    // race.js._enforcePlayfield). A toast fires once and fades, which tells the player
+    // nothing about the fact that a clock is running — the warning has to persist for
+    // exactly as long as the chance to fix it does.
+    //
+    // WHY IT EXISTS AT ALL: the engine has published this flag since `57a06a5` and
+    // race.js's own comment says the HUD "only needs to know whether to shout OUT OF
+    // BOUNDS". Nothing ever read it. So a player who drifted wide got silently
+    // teleported back to the last gate with no warning and no explanation, which reads
+    // as the game glitching rather than a rule being applied. Third time now that a
+    // field was added for a consumer that was never written (the DNF flag was the
+    // last — ADR-0015), so it is worth saying plainly: publishing a value is not the
+    // same as shipping the feature.
+    const offCourse = me.modifiers?.out_of_bounds === 1;
+    if (offCourse !== this._lastOffCourse) {
+      this.elOob.classList.toggle('is-active', offCourse);
+      this._lastOffCourse = offCourse;
     }
 
     // Check for state transitions to show center messages and play audio
@@ -425,6 +464,51 @@ export class HUD {
       .hud-center-message.visible {
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
+      }
+
+      /* ─ Off-course warning ─
+         Sits ABOVE the centre message rather than on top of it, because both can be
+         up at once: clipping a guardrail off the island raises this while CRASHED is
+         still toasting. Red, because it is the only warning in the HUD that means
+         "you are about to lose progress" — every other indicator is informational. */
+      .hud-oob {
+        position: absolute;
+        top: 18%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.85);
+        text-align: center;
+        opacity: 0;
+        transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+        pointer-events: none;
+      }
+      .hud-oob.is-active {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+      }
+      .hud-oob-title {
+        font-size: 40px;
+        font-weight: 900;
+        letter-spacing: 5px;
+        color: #ff4632;
+        text-shadow: 0 0 26px rgba(255, 70, 50, 0.75), 0 4px 8px rgba(0, 0, 0, 0.6);
+        /* The pulse carries the urgency — a static banner reads as scenery. Held to a
+           1s cycle so it is insistent without becoming a strobe. */
+        animation: hud-oob-pulse 1s ease-in-out infinite;
+      }
+      .hud-oob-sub {
+        margin-top: 4px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 3px;
+        color: rgba(255, 220, 210, 0.92);
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+      }
+      @keyframes hud-oob-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .hud-oob-title { animation: none; }
       }
 
       /* ─ Countdown ─ */
