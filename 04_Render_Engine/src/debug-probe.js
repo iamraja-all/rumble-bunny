@@ -150,6 +150,21 @@ export function exposeRenderer(rb) {
   if (DEBUG_ON && typeof window !== 'undefined') window.rb = rb;
 }
 
+/**
+ * Same bargain for the HUD, `?debug` only.
+ *
+ * WHY: the HUD's job is to turn ledger modifiers into pixels, and some of those
+ * modifiers only appear in states that are expensive or slow to reach for real — a
+ * best lap needs a completed lap, and the synthetic drivers used for testing crash too
+ * often to finish one. With the instance reachable, `hud.update([entity], pid, info)`
+ * can be called with a hand-built entity to prove the display path directly. That is a
+ * unit test of the client, run in the real browser, and the client had no other way to
+ * be tested at all.
+ */
+export function exposeHud(hud) {
+  if (DEBUG_ON && typeof window !== 'undefined') window.rbHud = hud;
+}
+
 /** Console helper: `rbProbe()` dumps the full surviving series, crash or not. */
 if (DEBUG_ON && typeof window !== 'undefined') {
   window.rbProbe = () => ({ boots: readJson(KEY_BOOTS, []), samples: readJson(KEY_SAMPLES, []) });

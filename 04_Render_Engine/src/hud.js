@@ -12,6 +12,22 @@
  * on 3D geometry only (separation of concerns).
  */
 
+/**
+ * m:ss.t — the one time format this HUD uses, for both the race clock and lap times.
+ *
+ * Extracted rather than copied: the race timer computed these four lines inline, and
+ * adding the best-lap readout would have made two places responsible for what a time
+ * looks like. ADR-0009 already recorded what happens in this codebase when a second
+ * file restates something instead of deriving it.
+ */
+function formatLapTime(seconds) {
+  const t = Math.max(0, seconds || 0);
+  const mins = Math.floor(t / 60);
+  const secs = Math.floor(t % 60);
+  const tenths = Math.floor((t * 10) % 10);
+  return `${mins}:${secs.toString().padStart(2, '0')}.${tenths}`;
+}
+
 export class HUD {
   constructor(audioEngine) {
     this.audio = audioEngine;
@@ -25,6 +41,7 @@ export class HUD {
         <div class="hud-position" id="hud-position">—</div>
         <div class="hud-state" id="hud-state">WAITING</div>
         <div class="hud-race-timer" id="hud-race-timer">0:00.0</div>
+        <div class="hud-best-lap" id="hud-best-lap"><span class="hud-best-lap-label">BEST</span> —</div>
       </div>
       <div class="hud-bottom">
         <div class="hud-speed-block">
@@ -68,6 +85,8 @@ export class HUD {
     this.elBoostVal = document.getElementById('hud-boost-val');
     this.elStunts = document.getElementById('hud-stunts');
     this.elOob = document.getElementById('hud-oob');
+    this.elBestLap = document.getElementById('hud-best-lap');
+    this._lastBestLap = null;
     this.elCenterMsg = document.getElementById('hud-center-msg');
     this.elCountdown = document.getElementById('hud-countdown');
 
@@ -117,11 +136,7 @@ export class HUD {
       }
 
       // Race timer
-      const t = raceInfo.raceTime || 0;
-      const mins = Math.floor(t / 60);
-      const secs = Math.floor(t % 60);
-      const tenths = Math.floor((t * 10) % 10);
-      this.elRaceTimer.textContent = `${mins}:${secs.toString().padStart(2, '0')}.${tenths}`;
+      this.elRaceTimer.textContent = formatLapTime(raceInfo.raceTime || 0);
     }
 
     if (!localPid || entities.length === 0) return;
@@ -175,6 +190,32 @@ export class HUD {
       this.elState.classList.add('state-air');
     } else if (me.state === 'DRIFT') {
       this.elState.classList.add('state-drift');
+    }
+
+    // Best lap.
+    //
+    // WHY THIS WAS MISSING RATHER THAN NEW: the engine has computed `bestLapTime` since
+    // ADR-0010 and published it as `modifiers.best_lap` on every frame ever since, and
+    // no client code has ever read it — a racing game that times your laps and then
+    // declines to tell you. Found by auditing every modifier the engine writes against
+    // every one the client reads, which is the sweep ADR-0020 recommended after the
+    // same pattern turned up three times (the DNF flag, out_of_bounds, and this).
+    //
+    // 0 is the engine's "no completed lap yet" sentinel — bestLapTime starts at
+    // Infinity and race.js maps that to 0 rather than putting Infinity on the wire. It
+    // must read as an em-dash, not as a 0.0s lap record.
+    const bestLap = me.modifiers?.best_lap ?? 0;
+    if (bestLap !== this._lastBestLap) {
+      this._lastBestLap = bestLap;
+      this.elBestLap.innerHTML = bestLap > 0
+        ? `<span class="hud-best-lap-label">BEST</span> ${formatLapTime(bestLap)}`
+        : '<span class="hud-best-lap-label">BEST</span> —';
+      // Flash on improvement so a new personal best is felt, not just displayed.
+      if (bestLap > 0) {
+        this.elBestLap.classList.remove('is-new');
+        void this.elBestLap.offsetWidth; // force reflow so the animation restarts
+        this.elBestLap.classList.add('is-new');
+      }
     }
 
     // Off-course warning.
@@ -464,6 +505,41 @@ export class HUD {
       .hud-center-message.visible {
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
+      }
+
+      /* ─ Best lap ─
+         Same plate treatment as the race timer, since both are clocks and they sit
+         next to each other. Dimmer, because your best lap is reference information
+         while the race clock is live. */
+      .hud-best-lap {
+        font-size: 16px;
+        font-weight: 500;
+        padding: 6px 14px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.4);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255,255,255,0.15);
+        letter-spacing: 2px;
+        font-variant-numeric: tabular-nums;
+        color: rgba(255,255,255,0.82);
+      }
+      .hud-best-lap-label {
+        font-size: 10px;
+        letter-spacing: 2px;
+        opacity: 0.62;
+        margin-right: 4px;
+      }
+      /* A new personal best should register as an event. One short pulse, not a loop —
+         it fires on improvement only, so a repeating animation would be wrong. */
+      .hud-best-lap.is-new {
+        animation: hud-best-flash 0.6s ease-out 1;
+      }
+      @keyframes hud-best-flash {
+        0%   { color: #66ffcc; border-color: rgba(102,255,204,0.9); transform: scale(1.06); }
+        100% { color: rgba(255,255,255,0.82); border-color: rgba(255,255,255,0.15); transform: scale(1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .hud-best-lap.is-new { animation: none; }
       }
 
       /* ─ Off-course warning ─

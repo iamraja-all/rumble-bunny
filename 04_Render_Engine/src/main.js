@@ -5,7 +5,7 @@ import { HUD } from './hud.js';
 import { SoundEngine } from './audio.js';
 import { Minimap } from './minimap.js';
 import { MainMenu } from './menu.js';
-import { startProbe, exposeRenderer } from './debug-probe.js';
+import { startProbe, exposeRenderer, exposeHud } from './debug-probe.js';
 
 // Get canvas
 const canvas = document.querySelector('#app');
@@ -24,6 +24,7 @@ const audio = new SoundEngine();
 
 // Initialize HUD Overlay (pass audio so it can trigger SFX)
 const hud = new HUD(audio);
+exposeHud(hud);
 
 // Initialize Minimap
 const minimap = new Minimap();
