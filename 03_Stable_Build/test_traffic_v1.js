@@ -94,11 +94,16 @@ function assert(cond, label) {
 
 // ── Test 4: THE INVARIANT — traffic never writes a race modifier ──────────────
 // This is the whole reason the module exists. If an update path ever sets lap,
-// checkpoint or race_finished on a traffic vehicle, traffic is a racer again and
-// ADR-0007's "traffic-2 won the race" returns.
+// checkpoint or route on a traffic vehicle, traffic is a racer again and ADR-0007's
+// "traffic-2 won the race" returns.
+//
+// The key list is deliberately only the modifiers that STILL EXIST. It used to include
+// race_finished and race_time, which ADR-0022 removed from the ledger — leaving them
+// here would have kept two assertions that can no longer fail, which is exactly the
+// vacuous-green trap ADR-0009 caught in items T5.
 (() => {
   const traffic = createTrafficVehicles(BALANCED_STATS);
-  const RACE_KEYS = ['lap', 'checkpoint', 'route', 'race_finished', 'race_time', 'best_lap'];
+  const RACE_KEYS = ['lap', 'checkpoint', 'route', 'best_lap'];
 
   for (const t of traffic) {
     for (let i = 0; i < 120; i++) { // two seconds of updates

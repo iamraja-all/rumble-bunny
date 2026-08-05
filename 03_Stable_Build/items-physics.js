@@ -77,10 +77,14 @@ export function updateItems(items, vehicles, dt) {
       // Can't hit crashed/airborne vehicles (invincibility frame / dodge)
       if (v.state === 'CRASHED' || v.state === 'AIRBORNE') continue;
       
-      // Optionally prevent owner from immediately hitting their own projectile
-      if (item.modifiers.owner === v.id && item.type === 'PROJECTILE') {
-         // simplistic check: if it's very fresh, ignore. In real game, owner could be immune for 1s.
-      }
+      // A dead `if (item.modifiers.owner === v.id)` branch stood here with an EMPTY
+      // body. It was unreachable twice over: nothing in the codebase ever assigned
+      // `modifiers.owner`, so the comparison could never be true, and the body did
+      // nothing even if it had been. It also cost a property lookup and a comparison
+      // per item per vehicle per frame inside the 60Hz loop (R07). spec.md §5 gives
+      // PROJECTILE no owner immunity — a shell crashes whatever it touches — so there
+      // is no behaviour here to preserve. If firer immunity is ever wanted it needs a
+      // populated owner field and a real rule, not a placeholder.
 
       if (checkCollision(v, item)) {
         consumed = true;
@@ -93,7 +97,7 @@ export function updateItems(items, vehicles, dt) {
         } else if (item.type === 'TRAP' || item.type === 'PROJECTILE') {
           // Crash the vehicle
           v.state = 'CRASHED';
-          v.modifiers.crash_timer = 1.5;
+          v._crashTimer = 1.5;
           v.speed *= 0.2; // Severely penalize speed instantly
         }
         

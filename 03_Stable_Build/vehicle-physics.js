@@ -78,14 +78,27 @@ export function createVehicleState(id, stats) {
     rotZ: 0,    // roll
     speed: 0,
     state: 'NORMAL',
+    // `modifiers` IS THE WIRE. Everything in here is serialized into the ledger and
+    // broadcast to all eight clients sixty times a second, so it holds only what a
+    // client actually reads: boost_timer and stunts drive the HUD.
+    //
+    // WHY takeoff_rot* AND crash_timer MOVED OUT (measured, 2026-08-05): they are
+    // engine-internal — the stunt detector compares current rotation against the
+    // rotation at takeoff, and crash_timer counts down a recovery. No client has ever
+    // read any of them, yet all four rode the wire on every frame of every race.
+    // Measuring a live broadcast put the frame at 2326 bytes, 1.06 MB/s across eight
+    // clients, and idea.md:15 promises play over a mobile hotspot.
+    //
+    // The `_` prefix is the convention this codebase already uses for state that must
+    // not be serialized (`v._input`, set on the handshake path in server.js).
     modifiers: {
       boost_timer: 0,
-      crash_timer: 0,
       stunts: 0,
-      takeoff_rotX: 0,
-      takeoff_rotY: 0,
-      takeoff_rotZ: 0,
     },
+    _crashTimer: 0,
+    _takeoffRotX: 0,
+    _takeoffRotY: 0,
+    _takeoffRotZ: 0,
     // WHY: velocity components stored separately from speed for airborne
     // trajectory — speed is the scalar forward velocity on ground, but
     // in air we need a full velocity vector for gravity integration.
@@ -129,10 +142,10 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
   // WHY: Crashed vehicles can't accelerate or steer until the recovery
   // timer expires. This is the penalty for a failed stunt landing.
   if (v.state === 'CRASHED') {
-    v.modifiers.crash_timer -= dt;
-    if (v.modifiers.crash_timer <= 0) {
+    v._crashTimer -= dt;
+    if (v._crashTimer <= 0) {
       v.state = 'NORMAL';
-      v.modifiers.crash_timer = 0;
+      v._crashTimer = 0;
     }
     // WHY: Even while crashed, gravity still applies if airborne somehow,
     // and friction still decelerates. Skip steering/throttle only.
@@ -260,15 +273,15 @@ export function updateVehicle(vehicle, input, dt, groundY = DEFAULT_GROUND_Y) {
 
     // Check for completed 360-degree rotations (2π radians)
     // We compare current absolute rotation against the rotation when we took off
-    const deltaX = Math.abs(v.rotX - v.modifiers.takeoff_rotX);
+    const deltaX = Math.abs(v.rotX - v._takeoffRotX);
     // WHY deltaY STAYS despite being provably 0 for any ordinary flight:
     // spec.md section 4.1 names yaw as one of the three scoring axes, and the cost
     // is one subtraction per tick (still O(1), R07). Keeping it means an external
     // yaw source — a shell hit or a spin trap applied mid-air — scores as a stunt
     // without this arithmetic having to be rediscovered. It is also the reason the
     // heading-preservation test can be written as an engine invariant.
-    const deltaY = Math.abs(v.rotY - v.modifiers.takeoff_rotY);
-    const deltaZ = Math.abs(v.rotZ - v.modifiers.takeoff_rotZ);
+    const deltaY = Math.abs(v.rotY - v._takeoffRotY);
+    const deltaZ = Math.abs(v.rotZ - v._takeoffRotZ);
 
     const TWO_PI = 2 * Math.PI;
     const totalRotations = Math.floor(deltaX / TWO_PI) + Math.floor(deltaY / TWO_PI) + Math.floor(deltaZ / TWO_PI);
@@ -330,9 +343,9 @@ function applyMovement(v, dt, groundY) {
     // WHY: If the vehicle is above ground and wasn't already airborne,
     // it just left a ramp or edge. Transition to AIRBORNE and record takeoff.
     v.state = 'AIRBORNE';
-    v.modifiers.takeoff_rotX = v.rotX;
-    v.modifiers.takeoff_rotY = v.rotY;
-    v.modifiers.takeoff_rotZ = v.rotZ;
+    v._takeoffRotX = v.rotX;
+    v._takeoffRotY = v.rotY;
+    v._takeoffRotZ = v.rotZ;
     v.modifiers.stunts = 0; // Reset stunts on new takeoff
   }
 
@@ -374,7 +387,7 @@ function checkLanding(v) {
     return v.modifiers.boost_timer > 0 ? 'BOOSTING' : 'NORMAL';
   } else {
     // Failed landing — crash penalty
-    v.modifiers.crash_timer = CRASH_RECOVERY_TIME;
+    v._crashTimer = CRASH_RECOVERY_TIME;
     v.modifiers.stunts = 0;
     v.modifiers.boost_timer = 0;
     v.rotX = 0;
@@ -423,9 +436,9 @@ export function normalizeAngle(angle) {
 export function launchVehicle(vehicle, upwardSpeed) {
   vehicle.vy = upwardSpeed;
   vehicle.state = 'AIRBORNE';
-  vehicle.modifiers.takeoff_rotX = vehicle.rotX;
-  vehicle.modifiers.takeoff_rotY = vehicle.rotY;
-  vehicle.modifiers.takeoff_rotZ = vehicle.rotZ;
+  vehicle._takeoffRotX = vehicle.rotX;
+  vehicle._takeoffRotY = vehicle.rotY;
+  vehicle._takeoffRotZ = vehicle.rotZ;
   vehicle.modifiers.stunts = 0;
   return vehicle;
 }

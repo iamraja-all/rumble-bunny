@@ -62,7 +62,7 @@ function runTests() {
     
     assert(remainingItems.length === 0, 'T3: Trap is consumed');
     assert(v.state === 'CRASHED', `T3: Vehicle state is CRASHED (got ${v.state})`);
-    assert(v.modifiers.crash_timer === 1.5, 'T3: Crash timer is 1.5s');
+    assert(v._crashTimer === 1.5, 'T3: Crash timer is 1.5s');
     assert(v.speed === 4, `T3: Speed is reduced (got ${v.speed})`);
   })();
 

@@ -189,8 +189,13 @@ export class RaceManager {
         vehicle.modifiers.lap = rs.lap;
         vehicle.modifiers.checkpoint = rs.nextCheckpoint;
         vehicle.modifiers.route = rs.route;
-        vehicle.modifiers.race_finished = rs.finished ? 1 : 0;
-        vehicle.modifiers.race_time = Math.round(this.raceTime * 10) / 10;
+        // `race_finished` and `race_time` used to be published here and are gone.
+        // Neither was read by anything, anywhere — not one line of client code and not
+        // one line of engine code. `race_time` duplicated the `RACE|` metadata line the
+        // HUD already reads, and `race_finished` duplicated `raceInfo.state` plus the
+        // final standings. Two keys per kart per frame for eight karts at 60Hz, for
+        // nobody. Found by auditing published modifiers against consumed ones; see
+        // ADR-0022 for the measured saving.
         vehicle.modifiers.best_lap = rs.bestLapTime === Infinity ? 0 : Math.round(rs.bestLapTime * 10) / 10;
         // One flag, not the raw countdown: the HUD only needs to know whether to
         // shout OUT OF BOUNDS, and the ledger is a 60Hz broadcast to eight people
@@ -305,11 +310,11 @@ export class RaceManager {
     vehicle.speed = 0;
     vehicle.state = 'NORMAL';
     vehicle.modifiers.boost_timer = 0;
-    vehicle.modifiers.crash_timer = 0;
+    vehicle._crashTimer = 0;
     vehicle.modifiers.stunts = 0;
-    vehicle.modifiers.takeoff_rotX = 0;
-    vehicle.modifiers.takeoff_rotY = 0;
-    vehicle.modifiers.takeoff_rotZ = 0;
+    vehicle._takeoffRotX = 0;
+    vehicle._takeoffRotY = 0;
+    vehicle._takeoffRotZ = 0;
 
     rs.outOfBoundsTimer = 0;
 

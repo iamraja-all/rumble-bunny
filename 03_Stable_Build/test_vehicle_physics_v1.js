@@ -239,14 +239,14 @@ function runTests() {
     }
 
     assert(v.state === 'CRASHED', `T10: Bad landing angle causes CRASHED (got ${v.state})`);
-    assert(v.modifiers.crash_timer > 0, 'T10: Crash timer is set');
+    assert(v._crashTimer > 0, 'T10: Crash timer is set');
   })();
 
   // ── Test 11: Crash recovery timer expires and returns to NORMAL ─────
   (() => {
     let v = createVehicleState('P0', BALANCED_STATS);
     v.state = 'CRASHED';
-    v.modifiers.crash_timer = 1.5;
+    v._crashTimer = 1.5;
 
     // Simulate 2 seconds (120 frames) — recovery is 1.5s
     for (let i = 0; i < 120; i++) {
@@ -254,7 +254,7 @@ function runTests() {
     }
 
     assert(v.state === 'NORMAL', `T11: Vehicle recovers from CRASHED after timer (got ${v.state})`);
-    assert(v.modifiers.crash_timer === 0, 'T11: Crash timer is zero after recovery');
+    assert(v._crashTimer === 0, 'T11: Crash timer is zero after recovery');
   })();
 
   // ── Test 12: Steering while airborne BARREL ROLLS the vehicle ───────
@@ -560,7 +560,7 @@ function runTests() {
 
       assert(v.state === 'CRASHED',
         `T16f: landing mid-roll, outside the tolerance window, CRASHES (got ${v.state})`);
-      assert(v.modifiers.crash_timer > 0, 'T16f2: the mid-roll crash sets a recovery timer');
+      assert(v._crashTimer > 0, 'T16f2: the mid-roll crash sets a recovery timer');
       assert(v.modifiers.boost_timer === 0, 'T16f3: a crashed roll pays no boost');
     })();
 
