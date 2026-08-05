@@ -4,7 +4,7 @@ import { Renderer } from './renderer.js';
 import { HUD } from './hud.js';
 import { SoundEngine } from './audio.js';
 import { Minimap } from './minimap.js';
-import { MainMenu } from './menu.js';
+import { MainMenu, deriveRoster } from './menu.js';
 import { startProbe, exposeRenderer, exposeHud } from './debug-probe.js';
 
 // Get canvas
@@ -114,22 +114,10 @@ function animate() {
     if (network.roomCode && menu.container && menu.container.parentNode) {
       menu.showLobbyCode(network.roomCode);
 
-      // Who else is in the room. Derived from the ledger rather than a new message:
-      // bots only take slots at START, so while the lobby is up every P-prefixed
-      // vehicle is a human who joined with the code. T1-T3 are traffic scenery and
-      // must not be counted as players — that conflation is the same mistake that
-      // once put traffic in the race results (ADR-0007).
-      const joined = state
-        .filter((e) => e.type === 'VEHICLE' && /^P\d+$/.test(e.id))
-        .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
-        .map((e) => ({
-          pid: e.id,
-          color:
-            e.modifiers && e.modifiers.color_sync !== undefined
-              ? `#${Number(e.modifiers.color_sync).toString(16).padStart(6, '0')}`
-              : '#8b8b8b',
-        }));
-      menu.showLobbyRoster(joined, network.pid);
+      // Who else is in the room, derived from the ledger rather than a new message.
+      // The rule (and why traffic must be excluded) lives with the function in menu.js,
+      // where it is unit-tested; this loop just feeds it the frame.
+      menu.showLobbyRoster(deriveRoster(state), network.pid);
     }
 
     // Hide menu and show HUD once race state begins broadcasting

@@ -55,6 +55,75 @@ function esc(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ESCAPES[ch]);
 }
 
+/**
+ * Turn final standings into result rows: position, result text and row classes.
+ *
+ * WHY PURE AND EXPORTED: this is the screen that ends every race, and it has already
+ * been wrong once — it rendered `finishOrder` and so showed a five-row leaderboard at
+ * the end of an eight-car race, silently omitting everyone who did not finish, usually
+ * including the player reading it (ADR-0015). The rules it encodes are all judgement
+ * calls that deserve assertions rather than a squint at a screenshot:
+ *   - position numbers count FINISHERS only; a DNF has no finishing position, and
+ *     numbering it anyway reads as "6th" rather than "did not finish"
+ *   - the winner highlight belongs to the first FINISHER, not to row zero — in a race
+ *     nobody finished there is no winner to crown
+ *   - a DNF shows "DNF", never a time; race.js publishes 0 for it, and "0.0s" would
+ *     read as an impossibly fast lap
+ *
+ * @param {Array} standings [{ pid, dnf, time }] from RaceManager, finishers first
+ * @param {string|null} localPid
+ * @returns {Array} [{ pid, position, result, isYou, classes }]
+ */
+export function buildResultRows(standings, localPid = null) {
+  let finisherCount = 0;
+  return (standings || []).map((entry) => {
+    const isDnf = !!entry.dnf;
+    if (!isDnf) finisherCount++;
+
+    const isYou = !!localPid && entry.pid === localPid;
+    const classes = ['result-row'];
+    if (!isDnf && finisherCount === 1) classes.push('result-row-win');
+    if (isDnf) classes.push('result-row-dnf');
+    if (isYou) classes.push('result-row-you');
+
+    return {
+      pid: entry.pid,
+      position: isDnf ? '—' : String(finisherCount),
+      result: isDnf ? 'DNF' : `${Number(entry.time || 0).toFixed(1)}s`,
+      isYou,
+      classes,
+    };
+  });
+}
+
+/**
+ * Who is in the lobby, derived from a ledger frame: [{ pid, color }] by slot.
+ *
+ * WHY THIS MOVED OUT OF main.js's FRAME LOOP: it was inline in animate(), which makes
+ * it unreachable from a test because importing main.js boots the whole app. The rule it
+ * encodes is one this project has broken before in the HUD — **traffic serializes as
+ * type VEHICLE too**, and counting T1-T3 as players is the same mistake that once
+ * reported "9th" in an eight-player race and once put a traffic car in the results
+ * (ADR-0007). It is worth an assertion in both places.
+ *
+ * Bots only take slots at START, so while the lobby is open every P-prefixed vehicle is
+ * a human who typed the code.
+ */
+export function deriveRoster(entities) {
+  return (entities || [])
+    .filter((e) => e.type === 'VEHICLE' && /^P\d+$/.test(e.id))
+    .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
+    .map((e) => ({
+      pid: e.id,
+      // color_sync is an integer on the wire. Pad to six hex digits or a dark livery
+      // like 0x0000ff renders as "#ff" — a valid-looking colour that is simply wrong.
+      color:
+        e.modifiers && e.modifiers.color_sync !== undefined
+          ? `#${Number(e.modifiers.color_sync).toString(16).padStart(6, '0')}`
+          : '#8b8b8b',
+    }));
+}
+
 export class MainMenu {
   constructor(onJoin) {
     this.onJoin = onJoin;
@@ -327,32 +396,16 @@ export class MainMenu {
     // reading a result they do not appear on at all. The server now sends full
     // standings; a DNF gets a row, a dash for position and DNF where the time goes.
     let rowsHtml = '';
-    let finisherCount = 0;
-    standings.forEach((entry) => {
-      const isDnf = !!entry.dnf;
-      if (!isDnf) finisherCount++;
-
-      // Position numbering counts finishers only — a DNF has no finishing position,
-      // and numbering them anyway would read as "6th" rather than "did not finish".
-      const position = isDnf ? '—' : String(finisherCount);
-      const result = isDnf ? 'DNF' : `${entry.time.toFixed(1)}s`;
-
-      const classes = ['result-row'];
-      if (!isDnf && finisherCount === 1) classes.push('result-row-win');
-      if (isDnf) classes.push('result-row-dnf');
-      // The one row the player actually looks for.
-      if (localPid && entry.pid === localPid) classes.push('result-row-you');
-
-      const label = localPid && entry.pid === localPid ? `${esc(entry.pid)} (YOU)` : esc(entry.pid);
-
+    // The decisions live in buildResultRows (pure, tested); this loop only writes HTML.
+    for (const row of buildResultRows(standings, localPid)) {
       rowsHtml += `
-          <li class="${classes.join(' ')}">
-            <span class="result-pos">${position}</span>
-            <span class="result-name">${label}</span>
-            <span class="result-time">${result}</span>
+          <li class="${row.classes.join(' ')}">
+            <span class="result-pos">${row.position}</span>
+            <span class="result-name">${esc(row.pid)}${row.isYou ? ' (YOU)' : ''}</span>
+            <span class="result-time">${row.result}</span>
           </li>
       `;
-    });
+    }
 
     this.container.innerHTML = `
       <div class="menu-card results-card">
