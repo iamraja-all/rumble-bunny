@@ -47,6 +47,20 @@ const SEARCH_WINDOW = 12;
 // The engine must agree with the picture, so the picture picks the parameters.
 const TENSION = 0.5;
 
+/**
+ * RAIL_OFFSET — how far outside the painted edge the steel actually stands.
+ *
+ * `scenery.js:308` builds the guardrails at `width / 2 + 1.6`, so on the main road
+ * the paint ends at 14 m and the barrier is at 15.6 m, with a 1.6 m strip of
+ * run-off between them. S1 recorded this in a comment because nothing consumed it;
+ * S2 does, and a number that decides where a kart stops must not be typed twice.
+ *
+ * This module owns where the STEEL is. It deliberately does not know how wide a
+ * kart is — that belongs to whoever resolves contact (barriers_v1.js), because a
+ * kart-centre clamp line is a fact about karts, not about roads.
+ */
+export const RAIL_OFFSET = 1.6;
+
 // WHY AN EPSILON DEDUPE: `CIRCUIT_DEF.road.mainPoints` repeats its first point as
 // its last, so a control point can coincide with its neighbour. A zero-length
 // polyline segment would divide by zero in the projection below. Nothing in the
@@ -133,6 +147,30 @@ export function buildRoadIndex(roadDef) {
     // the engine must not invent any — S2 resolves WALL edges by clamping, and
     // clamping a kart against a barrier the player cannot see is worse than the
     // hole this whole slice exists to close.
+    //
+    // THIS ONE FIELD IS ALSO WHAT MAKES THE SHORTCUT REACHABLE, and it took a
+    // deleted implementation to see it. S2 first grew a per-segment, per-side edge
+    // model plus a boot pass that cut gaps in the main road's steel wherever the
+    // dirt crossed it — on the reasoning that solid rails would wall the shortcut
+    // off, since the dirt centreline runs up to 29.2 m outside the main barrier.
+    // Then it was measured: over 506,532 (position, heading) pairs on a 1 m grid
+    // across the whole island, cutting those gaps changed the outcome at TWO grid
+    // points, by 8 cm. The gaps were computing nothing.
+    //
+    // The reason is that at a junction the two roads OVERLAP — which is what a
+    // junction is. Wherever the dirt covers the ground, roadAt hands that ground to
+    // the dirt, and the dirt has no barriers, so the main road's steel never applies
+    // there. No gap is needed because there was never a wall across the entrance.
+    //
+    // Stated precisely, because a mutation caught the loose version: this does NOT
+    // depend on the least-overshoot rule specifically. Mutating ownership to
+    // nearest-centreline leaves every shortcut assertion green, since on the dirt
+    // centreline the dirt is also the nearest road. Least-overshoot earns its keep on
+    // SURFACE correctness — grass reported on tarmac, which S3 will depend on and
+    // which test_road-geometry's T6d guards — not on shortcut reachability.
+    //
+    // ~80 lines and a million boot-time distance tests went away and the behaviour is
+    // identical. Ponytail Rung 1, settled by measurement rather than by argument.
     SHORTCUT: buildPolyline(roadDef.shortcutPoints, roadDef.shortcutWidth, 'DIRT', 'OPEN'),
   };
 }
