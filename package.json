@@ -11,6 +11,7 @@
     "test:hostile": "node 02_Isolation_Chamber/test_server_hostile_v1.js",
     "test:road": "node 02_Isolation_Chamber/test_road-geometry_v1.js",
     "test:barriers": "node 02_Isolation_Chamber/test_barriers_v1.js",
-    "test:surfaces": "node 02_Isolation_Chamber/test_surfaces_v1.js"
+    "test:surfaces": "node 02_Isolation_Chamber/test_surfaces_v1.js",
+    "test:terrain": "node 02_Isolation_Chamber/test_heightfield_v1.js"
   }
 }
