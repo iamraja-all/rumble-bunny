@@ -8,6 +8,7 @@ import { RaceManager } from './race.js';
 import { BotController } from './bots.js';
 import { createTrafficVehicles, updateTrafficVehicle, advanceTrafficProgress } from './traffic.js';
 import { RoomManager } from './room-manager.js';
+import { CIRCUIT_DEF } from './circuit-track.js';
 import { finiteClamp, safeHexColor } from './quarantine.js';
 import { createServer } from 'node:http';
 import path from 'node:path';
@@ -16,6 +17,69 @@ import { createStaticHandler } from './static-files.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── SOLID GROUND play-test switch (TEMPORARY) ────────────────────────────────
+//
+// S1-S4 live in 02_Isolation_Chamber and are green there (181 assertions), but R02 keeps
+// them out of 03_Stable_Build until the human has SEEN them work — and they cannot be
+// seen without being called. This flag is the smallest thing that resolves that circle.
+//
+// OFF unless SOLID_GROUND=1 is in the environment. With the flag absent, `solidGround`
+// stays null, every call site below is skipped, and this file behaves exactly as it did
+// before — which is what makes it safe to sit here before the gate.
+//
+//   node 03_Stable_Build/server.js              <- unchanged behaviour
+//   SOLID_GROUND=1 node 03_Stable_Build/server.js   <- road, barriers, grip, terrain
+//
+// ⚠ DELETE THIS BLOCK AT PROMOTION. Once the four modules move into 03_Stable_Build the
+// imports become ordinary ones and the flag becomes dead weight — and a permanent flag
+// guarding half the physics is exactly the sort of thing that quietly becomes two engines.
+let solidGround = null;
+if (process.env.SOLID_GROUND === '1') {
+  const [road, barriers, surfaces, heightfield, botLine] = await Promise.all([
+    import('../02_Isolation_Chamber/road-geometry_v1.js'),
+    import('../02_Isolation_Chamber/barriers_v1.js'),
+    import('../02_Isolation_Chamber/surfaces_v1.js'),
+    import('../02_Isolation_Chamber/heightfield_v1.js'),
+    import('../02_Isolation_Chamber/bot-racing-line_v1.js'),
+  ]);
+  solidGround = {
+    // Built ONCE at boot, not per room or per tick: the index is read-only, so sharing
+    // one is safe, and building it costs 0.9 ms (ADR-0026).
+    index: road.buildRoadIndex(CIRCUIT_DEF.road),
+    field: heightfield.COAST,
+    resolveBarrier: barriers.resolveBarrier,
+    applySurfaceDrag: surfaces.applySurfaceDrag,
+    settleOnTerrain: heightfield.settleOnTerrain,
+    // S7: bots that know where the road is. Measured over ADR-0011's seeded 180 s sim,
+    // the wrapper takes finishers 5 -> 8, gates 167 -> 216, time off the road
+    // 25.6% -> 5.1%, and karts that fall off the island 7/8 -> 0/8.
+    makeRoadAwareBot: botLine.makeRoadAwareBot,
+  };
+  console.log('[SOLID GROUND] road + barriers + grip + terrain + road-aware bots ACTIVE (S1-S4 + S7, unpromoted)');
+}
+
+/**
+ * solidGroundStep — the S1-S4 passes for one vehicle, in the order their contracts
+ * require: barrier clamp, then grip on the ground it ended up on, then the elevation
+ * settle once x and z are final (heightfield_v1's header spells out why).
+ *
+ * The matching pre-step is the groundY argument at the updateVehicle call sites below —
+ * sampled at the kart's OLD position, which is what stops a descending kart being
+ * mislabelled AIRBORNE. Both halves are needed; neither works alone.
+ */
+function solidGroundStep(v) {
+  if (!solidGround) return;
+  solidGround.resolveBarrier(v, solidGround.index, DT);
+  solidGround.applySurfaceDrag(v, solidGround.index, DT);
+  solidGround.settleOnTerrain(v, solidGround.field, DT);
+}
+
+// The ground height under a kart right now, for the updateVehicle pre-step. Returns the
+// module default (0) when the flag is off, so the call sites read identically either way.
+function groundUnder(v) {
+  return solidGround ? solidGround.field.heightAt(v.x, v.z) : 0;
+}
 
 // Serve the built static files from /public (which Docker populates). In local dev
 // that directory does not exist — Vite serves the client on :5173 — and the handler
@@ -111,6 +175,15 @@ wss.on('connection', (ws) => {
 
         // Spawn traffic immediately so it's there
         room.trafficList = createTrafficVehicles(BALANCED_STATS);
+        // S7 covers traffic as well as bots, and traffic.js:50 gives each car the SAME
+        // BotController, so the same wrapper works with no new code. Without this the
+        // three obstacle cars spend half the race on the grass — measured live at
+        // 44-56% — which after S3 also means they crawl.
+        if (solidGround) {
+          for (const t of room.trafficList) {
+            t.bot = solidGround.makeRoadAwareBot(t.bot, solidGround.index);
+          }
+        }
 
         // Private item-spawn timers for this room. Previously every room mutated
         // one shared object on TRACK_DEF, so a pickup in one race silently re-timed
@@ -170,7 +243,12 @@ wss.on('connection', (ws) => {
           const botId = `bot-${room.code}-${botIndex++}`;
           room.lobby.join(botId);
           room.raceManager.registerPlayer(botId);
-          room.bots.set(botId, new BotController(botId));
+          // S7 wraps the controller so the bot holds a line on the road. With the flag
+          // off this is the untouched BotController, exactly as before.
+          const controller = new BotController(botId);
+          room.bots.set(botId, solidGround
+            ? solidGround.makeRoadAwareBot(controller, solidGround.index)
+            : controller);
         }
         room.raceManager.startCountdown();
       }
@@ -228,7 +306,7 @@ setInterval(() => {
       }
 
       const finalInput = canGo ? input : { throttle: 0, brake: 0, steer: 0, drift: false };
-      let newV = updateVehicle(v, finalInput, DT);
+      let newV = updateVehicle(v, finalInput, DT, groundUnder(v));
       
       if (newV.state !== 'AIRBORNE' && newV.state !== 'CRASHED') {
         const pad = getLaunchPadAt(newV.x, newV.z);
@@ -237,6 +315,10 @@ setInterval(() => {
         }
       }
 
+      // After the pad check, so a launched kart is skipped by all three passes — which is
+      // the exemption that makes the ramps and the shortcut work.
+      solidGroundStep(newV);
+
       newV._input = v._input;
       room.lobby.players.set(clientId, newV);
     }
@@ -244,13 +326,14 @@ setInterval(() => {
     // Update Traffic
     for (const t of room.trafficList) {
       const input = updateTrafficVehicle(t, DT);
-      t.vehicle = updateVehicle(t.vehicle, input, DT);
+      t.vehicle = updateVehicle(t.vehicle, input, DT, groundUnder(t.vehicle));
       if (t.vehicle.state !== 'AIRBORNE' && t.vehicle.state !== 'CRASHED') {
         const pad = getLaunchPadAt(t.vehicle.x, t.vehicle.z);
         if (pad) {
           t.vehicle = launchVehicle(t.vehicle, pad.power);
         }
       }
+      solidGroundStep(t.vehicle);
       advanceTrafficProgress(t);
     }
 
@@ -263,6 +346,15 @@ setInterval(() => {
     
     room.activeItems = updateItems(room.activeItems, allVehicles, DT);
     applyCarCollisions(allVehicles);
+
+    // applyCarCollisions PUSHES KARTS APART by editing x and z directly, with no idea a
+    // barrier exists — so a pileup against a wall would shove a car straight through the
+    // steel that step 1 had just contained. Re-clamping afterwards closes that, and it
+    // costs 0.4 us per kart (ADR-0027). Grip and terrain are not re-run: a shove does not
+    // change what you are standing on, and the elevation settle would fight the push.
+    if (solidGround) {
+      for (const v of allVehicles) solidGround.resolveBarrier(v, solidGround.index, DT);
+    }
 
     // 4. Generate State Frame
     const vehicleLedger = serializeLedger(allVehicles);
