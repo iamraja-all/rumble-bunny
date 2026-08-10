@@ -1,3 +1,5 @@
+import { getRandomWeapon } from './weapons.js';
+import { addWeaponToInventory } from './weapon-firing.js';
 import { createItemState } from './items-physics.js';
 import { CIRCUIT_DEF } from './circuit-track.js';
 
@@ -88,4 +90,18 @@ export function updateSpawners(dt, activeItems, trackState) {
   }
 
   return newItems;
+}
+
+/**
+ * handleItemCollection — Process item box pickup and grant weapon
+ * Called when vehicle collides with POWERUP item box
+ * 
+ * @param {object} vehicle - Vehicle collecting item
+ * @param {number} position - Race position (1 = leader)
+ * @returns {string} - Weapon type granted
+ */
+export function handleItemCollection(vehicle, position) {
+  const weaponType = getRandomWeapon(Math.max(1, Math.min(position, 4)));
+  addWeaponToInventory(vehicle, weaponType);
+  return weaponType;
 }

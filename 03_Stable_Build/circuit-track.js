@@ -101,9 +101,12 @@ export const CIRCUIT_DEF = Object.freeze({
     { x: 19, y: 0, z: 19 },
   ],
   itemSpawners: [
-    { id: 'spawner_1', x: -47, z: -18, type: 'POWERUP_BOOST', respawnTime: 10, timer: 0 },
-    { id: 'spawner_2', x: -58, z: -43, type: 'TRAP', respawnTime: 10, timer: 0 },
-    { id: 'spawner_3', x: 42, z: -76, type: 'POWERUP_BOOST', respawnTime: 10, timer: 0 },
+    { id: 'spawner_1', x: -47, z: -18, type: 'POWERUP_BOOST', respawnTime: 8 },
+    { id: 'spawner_2', x: -58, z: -43, type: 'POWERUP_BOOST', respawnTime: 8 },
+    { id: 'spawner_3', x: 42, z: -76, type: 'POWERUP_BOOST', respawnTime: 8 },
+    { id: 'spawner_4', x: -20, z: -105, type: 'POWERUP_BOOST', respawnTime: 8 },
+    { id: 'spawner_5', x: 60, z: -60, type: 'POWERUP_BOOST', respawnTime: 8 },
+    { id: 'spawner_6', x: 20, z: 55, type: 'POWERUP_BOOST', respawnTime: 8 },
   ],
 });
 

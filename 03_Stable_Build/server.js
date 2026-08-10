@@ -14,6 +14,8 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createStaticHandler } from './static-files.js';
+import { getRandomWeapon, addWeaponToInventory } from './weapons.js';
+import { fireWeapon, updateProjectiles, applyAreaEffect, cycleWeapon } from './weapon-firing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -269,6 +271,34 @@ wss.on('connection', (ws) => {
         v._input.steer = finiteClamp(parts[3], -1, 1);
         v._input.drift = parts[4] === '1' || parts[4] === 'true';
       }
+    } else if (msg.startsWith('FIRE')) {
+      // Weapon fire command: FIRE or FIRE|weaponType
+      const v = room.lobby.getVehicle(clientId);
+      if (v && v.state !== 'CRASHED') {
+        const parts = msg.split('|');
+        const weaponType = parts[1] || null;
+        const vehicleArray = Array.from(room.lobby.players.values());
+        const fireResult = fireWeapon(v, weaponType, vehicleArray, code);
+        
+        if (fireResult) {
+          if (fireResult.type === 'PROJECTILE' || fireResult.type === 'MINE') {
+            room.activeItems.push(fireResult.data);
+          } else if (fireResult.type === 'SHOCKWAVE' || fireResult.type === 'EMP') {
+            applyAreaEffect(fireResult.data, vehicleArray);
+          }
+          // Broadcast fire event to all clients for visual/audio feedback
+          for (const [cid, wsConn] of room.connections.entries()) {
+            wsConn.send(`WEAPON_FIRE|${v.id}|${fireResult.type}`);
+          }
+        }
+      }
+    } else if (msg.startsWith('CYCLE_WEAPON')) {
+      // Cycle to next weapon
+      const v = room.lobby.getVehicle(clientId);
+      if (v) {
+        const newWeapon = cycleWeapon(v);
+        ws.send(`WEAPON_CYCLE|${newWeapon || 'NONE'}`);
+      }
     }
   });
 
@@ -340,7 +370,15 @@ setInterval(() => {
     // 2. Update Race
     room.raceManager.update(DT, room.lobby);
 
-    // 3. Update Items & Collisions
+    // 3. Update Projectiles (weapon system)
+    if (room.projectiles && room.projectiles.length > 0) {
+      const vehicleArray = Array.from(room.lobby.players.values());
+      room.projectiles = updateProjectiles(room.projectiles, vehicleArray, DT);
+    } else if (!room.projectiles) {
+      room.projectiles = [];
+    }
+
+    // 4. Update Items & Collisions
     const updatedVehicles = room.lobby.getAllVehicles();
     const allVehicles = [...updatedVehicles, ...room.trafficList.map(t => t.vehicle)];
     
@@ -359,6 +397,7 @@ setInterval(() => {
     // 4. Generate State Frame
     const vehicleLedger = serializeLedger(allVehicles);
     const itemLedger = serializeLedger(room.activeItems);
+    const projectileLedger = room.projectiles.length > 0 ? serializeLedger(room.projectiles) : null;
     
     const raceLine = `RACE|${raceInfo.state}|${raceInfo.countdown}|${raceInfo.raceTime.toFixed(1)}|${raceInfo.totalLaps}|${raceInfo.finishOrder.length}`;
     
@@ -383,6 +422,7 @@ setInterval(() => {
     }
     if (vehicleLedger) fullFrame += '\n' + vehicleLedger;
     if (itemLedger) fullFrame += '\n' + itemLedger;
+    if (projectileLedger) fullFrame += '\nPROJECTILES|' + projectileLedger;
 
     // 5. Broadcast to specific room
     if (fullFrame.length > 0) {

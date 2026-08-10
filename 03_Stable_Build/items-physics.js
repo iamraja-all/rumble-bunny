@@ -10,6 +10,7 @@
 // One definition, imported — not a second copy. These two collision systems had
 // already drifted apart (vehicle-vehicle contact was using half this value).
 import { VEHICLE_RADIUS } from './vehicle-physics.js';
+import { handleItemCollection } from './track.js';
 
 const ITEM_RADIUS = 1.0;
 const COLLISION_DIST_SQ = (VEHICLE_RADIUS + ITEM_RADIUS) * (VEHICLE_RADIUS + ITEM_RADIUS);
@@ -89,16 +90,44 @@ export function updateItems(items, vehicles, dt) {
       if (checkCollision(v, item)) {
         consumed = true;
         
-        // Apply effect
+        // Apply effect based on item type
         if (item.type === 'POWERUP_BOOST') {
-          // Grant 2s boost
-          v.modifiers.boost_timer = (v.modifiers.boost_timer || 0) + 2.0;
-          v.state = 'BOOSTING';
+          // Grant weapon from item box (rubber-banded by position)
+          // Estimate position from lap/checkpoint progress
+          const position = (v.modifiers.lap || 1);
+          handleItemCollection(v, position);
         } else if (item.type === 'TRAP' || item.type === 'PROJECTILE') {
           // Crash the vehicle
           v.state = 'CRASHED';
           v._crashTimer = 1.5;
           v.speed *= 0.2; // Severely penalize speed instantly
+        } else if (item.type === 'MISSILE' || item.type === 'HOMING_MISSILE') {
+          // Missile hit - crash and knockback
+          v.state = 'CRASHED';
+          v._crashTimer = 1.8;
+          v.speed *= 0.1;
+          // Apply knockback in projectile direction
+          const knockbackX = Math.sin(item.rotY) * 8;
+          const knockbackZ = Math.cos(item.rotY) * 8;
+          v.x += knockbackX;
+          v.z += knockbackZ;
+        } else if (item.type === 'MINE') {
+          // Mine explosion - crash vehicle
+          v.state = 'CRASHED';
+          v._crashTimer = 2.0;
+          v.speed *= 0.1;
+        } else if (item.type === 'SHOCKWAVE') {
+          // Shockwave knocks back but doesn't crash
+          v.speed *= 0.4;
+          const knockbackX = Math.sin(item.rotY) * 12;
+          const knockbackZ = Math.cos(item.rotY) * 12;
+          v.x += knockbackX;
+          v.z += knockbackZ;
+        } else if (item.type === 'EMP') {
+          // EMP disables controls temporarily
+          v.state = 'CRASHED';
+          v._crashTimer = 2.5;
+          v.speed *= 0.3;
         }
         
         break; // Item is consumed, stop checking other vehicles

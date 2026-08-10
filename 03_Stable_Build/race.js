@@ -1,4 +1,8 @@
 import { advanceCircuitProgress, createCircuitProgress, getLastClearedGate, CIRCUIT_DEF } from './circuit-track.js';
+import { checkVehicleCollisions } from './combat-system.js';
+import { updateItems } from './items-physics.js';
+import { updateSpawners, createTrackState } from './track.js';
+import { fireWeapon, updateProjectiles } from './weapon-firing.js';
 
 const TOTAL_LAPS = 3;
 
@@ -77,6 +81,9 @@ export function createRaceState() {
     // instant it is back in bounds, so a car that clips the edge and recovers
     // never accumulates towards a respawn.
     outOfBoundsTimer: 0,
+    // Combat & weapon state
+    weapons: [], // Array of weapon types available to use
+    weaponCooldowns: {}, // Map of weapon type -> remaining cooldown time
   };
 }
 
@@ -89,6 +96,8 @@ export class RaceManager {
     this.previousPositions = new Map();
     this.totalLaps = TOTAL_LAPS;
     this.finishOrder = [];
+    this.activeItems = []; // Active items/projectiles on the track
+    this.trackState = createTrackState(); // Per-room item spawner timers
     // Final standings — EVERY entrant, finishers and DNFs alike. Null until the race
     // completes, then built exactly once (see _settleCompletion).
     //
@@ -141,6 +150,31 @@ export class RaceManager {
     if (this.state === 'RACING') {
       this.raceTime += dt;
 
+      // STEP 1: Collect all vehicles into an array for collision detection
+      const vehicleArray = [];
+      for (const [clientId, vehicle] of lobby.players.entries()) {
+        const rs = this.raceStates.get(clientId);
+        if (!rs || rs.finished) continue;
+        vehicleArray.push(vehicle);
+      }
+
+      // STEP 2: Check and resolve vehicle-to-vehicle collisions
+      // WHY: This is the CORE rumble racing mechanic - cars must bump!
+      const collisionResult = checkVehicleCollisions(vehicleArray, dt);
+      
+      // STEP 2.5: Update item spawners and projectiles
+      const newItems = updateSpawners(dt, this.activeItems, this.trackState);
+      this.activeItems = this.activeItems.concat(newItems);
+      
+      // Update projectile positions and check collisions
+      this.activeItems = updateItems(this.activeItems, vehicleArray, dt);
+      
+      // Update weapon projectiles (separate from items)
+      const updatedProjectiles = updateProjectiles(this.activeItems, vehicleArray, dt);
+      // Merge back any remaining projectiles
+      this.activeItems = this.activeItems.filter(item => !item.type.startsWith('PROJECTILE_') || updatedProjectiles.includes(item));
+      
+      // STEP 3: Process remaining race logic (lap counting, OOB, etc.)
       for (const [clientId, vehicle] of lobby.players.entries()) {
         let rs = this.raceStates.get(clientId);
         if (!rs) {
