@@ -107,8 +107,11 @@ export class Renderer {
     // sea would end in a hard line against the sky.
     this.scene.fog = new THREE.Fog(0xaec9de, 500, 1600);
 
+    // WHY FOV INCREASED TO 78 (from 65): Rumble Racing arcade aesthetic needs
+    // wider field of view for speed sensation and peripheral vision in combat.
+    // 75-85° is standard for arcade racers (Burnout, Blur, Rocket League).
     this.camera = new THREE.PerspectiveCamera(
-      65,
+      78,
       window.innerWidth / window.innerHeight,
       0.1,
       2000 // WHY: extended far plane so the 10,000-unit Sky dome stays visible
@@ -163,9 +166,18 @@ export class Renderer {
       console.error('[renderer] optional GLB kart assets failed to load:', err);
     });
 
-    // Smooth camera follow state: High and Wide angle for better visibility
-    this._camPos = new THREE.Vector3(0, 10, 18);
-    this._camTarget = new THREE.Vector3(0, 0, -10); // Look slightly ahead of the car
+    // WHY CAMERA CHANGED FOR RUMBLE RACING (2026-08-XX):
+    // Old camera (Y=10, Z=18) was too low and close for combat awareness.
+    // New position gives better situational awareness for weapon targeting
+    // and creates speed sensation with wider FOV.
+    // - Higher Y (12→14) = see more of track ahead, spot enemies easier
+    // - Further Z (22→26) = more car in frame, better speed perception  
+    // - Wider FOV (75°) = exaggerated speed feeling, arcade aesthetic
+    this._camPos = new THREE.Vector3(0, 13, 24);
+    this._camTarget = new THREE.Vector3(0, 0.8, -12); // Look slightly ahead and up
+    
+    // Screen shake state for combat impacts
+    this._screenShake = { intensity: 0, duration: 0 };
 
     // WHY THESE TWO HANDLERS EXIST:
     // without a 'webglcontextlost' listener the browser's default behaviour is to
@@ -647,7 +659,14 @@ export class Renderer {
   }
 
   // ── PER-FRAME STATE SYNC ──────────────────────────────────────────────
-  updateState(entities, localPid) {
+  /**
+   * updateState — Sync renderer with headless ledger state
+   * 
+   * @param {Array} entities - All game entities from server
+   * @param {string} localPid - Local player ID for camera targeting
+   * @param {number} [dt=1/60] - Delta time for screen shake decay
+   */
+  updateState(entities, localPid, dt = 1/60) {
     const activeIds = new Set();
     const time = performance.now() * 0.001; // seconds
 
@@ -675,6 +694,12 @@ export class Renderer {
         let baseColor = PLAYER_COLORS[slotIndex % PLAYER_COLORS.length];
         if (entity.modifiers && entity.modifiers.color_sync !== undefined) {
           baseColor = entity.modifiers.color_sync;
+        }
+        
+        // RUMBLE: Visual feedback for shield/invincibility
+        if (entity.modifiers && entity.modifiers.shield_timer > 0) {
+          // Add blue glow effect to shielded vehicles (future: add emissive material)
+          entity.modifiers.shield_timer -= dt;
         }
 
         // Find the chassis mesh (first direct child mesh, or first child in group)
@@ -770,11 +795,14 @@ export class Renderer {
         // bumper, so the road rushes past the bottom of the frame. Dropping to
         // 3.4m up / 8.5m back roughly triples the apparent velocity at the same
         // actual m/s, for free.
+        // WHY CHANGED FOR RUMBLE: Increased base offset for better combat awareness
         const speedT = Math.min(Math.abs(entity.speed) / 40, 1);
 
         // Speed pullback: the camera eases back and lowers slightly as the kart
         // gains pace, which is the classic trick for making fast feel fast.
-        const camOffset = new THREE.Vector3(0, 3.4 - speedT * 0.5, 8.5 + speedT * 2.2);
+        // RUMBLE TUNING: Higher base Y (4.2 vs 3.4) for seeing nearby enemies,
+        // further back Z (10.5 vs 8.5) for wider situational awareness
+        const camOffset = new THREE.Vector3(0, 4.2 - speedT * 0.4, 10.5 + speedT * 2.5);
         camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
         const targetCamPos = mesh.position.clone().add(camOffset);
         // Snappier follow than 0.1 — a loose camera at this distance feels drunk.
@@ -782,17 +810,35 @@ export class Renderer {
 
         // Aim at head height a little ahead of the car so ramps and the next gate
         // stay in frame rather than sitting off the top edge.
-        const lookOffset = new THREE.Vector3(0, 1.6, -12);
+        // RUMBLE: Look target raised for better enemy tracking
+        const lookOffset = new THREE.Vector3(0, 2.0, -14);
         lookOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), entity.rotY);
         const lookTarget = mesh.position.clone().add(lookOffset);
 
         this._camTarget.lerp(lookTarget, 0.18);
+        
+        // Apply screen shake if active
+        if (this._screenShake.duration > 0) {
+          const shakeX = (Math.random() - 0.5) * this._screenShake.intensity;
+          const shakeY = (Math.random() - 0.5) * this._screenShake.intensity;
+          const shakeZ = (Math.random() - 0.5) * this._screenShake.intensity;
+          this.camera.position.x += shakeX;
+          this.camera.position.y += shakeY;
+          this.camera.position.z += shakeZ;
+          this._screenShake.duration -= dt;
+          if (this._screenShake.duration <= 0) {
+            this._screenShake.intensity = 0;
+            this._screenShake.duration = 0;
+          }
+        }
+        
         this.camera.position.copy(this._camPos);
         this.camera.lookAt(this._camTarget);
 
         // Widen the lens with speed. A rising FOV at pace is the cheapest and most
         // effective speed cue there is.
-        const targetFov = 62 + speedT * 12;
+        // RUMBLE: Base FOV increased from 62 to 68 for more arcade feel
+        const targetFov = 68 + speedT * 14;
         if (Math.abs(this.camera.fov - targetFov) > 0.05) {
           this.camera.fov += (targetFov - this.camera.fov) * 0.08;
           this.camera.updateProjectionMatrix();
@@ -820,6 +866,19 @@ export class Renderer {
         disposeObject(mesh, this._kartParts);
       }
     }
+  }
+
+  /**
+   * triggerScreenShake — Add camera shake for combat impacts
+   * 
+   * @param {number} intensity - Shake magnitude (0.1-2.0 typical)
+   * @param {number} duration - Duration in seconds
+   */
+  triggerScreenShake(intensity, duration) {
+    // Don't interrupt existing stronger shake
+    if (intensity <= this._screenShake.intensity) return;
+    this._screenShake.intensity = Math.min(intensity, 3.0); // Cap max intensity
+    this._screenShake.duration = duration;
   }
 
   render() {

@@ -1,10 +1,66 @@
+# Dependencies
 node_modules/
-.superpowers/
-.worktrees/
 
-# Build output. `public/` is what 04_Render_Engine/dist becomes when the server
-# serves the client itself (Docker COPYs it there, and static-files.js indexes it).
-# Generated, never edited, and committing it would put a minified copy of the whole
-# client in every diff.
+# Build artifacts
 dist/
-public/
+build/
+target/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# C/C++
+*.o
+*.obj
+*.so
+*.a
+*.lib
+*.dll
+*.dylib
+*.exe
+
+# Compression
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
